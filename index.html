@@ -901,11 +901,62 @@ function renderBilan(){
         <td>${esc(p.cible||'')}</td><td class="mono">${esc(p.dar??'—')}j</td><td style="font-size:12px">${esc(p.h||'—')}</td>
         <td style="text-align:right" class="mono">${p.ift==null?'<span style="color:var(--mute)">hors IFT</span>':'<b>'+fmt(p.ift,3)+'</b>'}</td></tr>`).join('')}
       </tbody></table></div>
-      <div style="padding:10px 16px;text-align:right"><button class="btn btn-danger btn-sm" onclick="supprPassage('${pa.id}')">Supprimer ce passage</button></div>
+      <div style="padding:10px 16px;display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-o btn-sm" onclick="editPassage('${pa.id}')">Modifier ce passage</button>
+        <button class="btn btn-danger btn-sm" onclick="supprPassage('${pa.id}')">Supprimer</button>
+      </div>
     </div>`}).join('')}`;
 }
 function supprPassage(id){if(confirm('Supprimer ce passage ?')){passages=passages.filter(p=>p.id!==id);saveDB();renderBilan();toast('Passage supprimé');}}
 function voirPassage(id){go('bilan');}
+
+let _editingId=null;
+function editPassage(id){
+  const pa=passages.find(p=>p.id===id); if(!pa)return;
+  _editingId=id;
+  // charger le passage dans la page saisie
+  go('saisie');
+  // attendre que renderSaisie ait fini puis pré-remplir
+  setTimeout(()=>{
+    // en-tête
+    const sDate=document.getElementById('sDate'); if(sDate)sDate.value=pa.date||'';
+    const sStade=document.getElementById('sStade'); if(sStade)sStade.value=pa.stade||'';
+    const sIlot=document.getElementById('sIlot'); if(sIlot)sIlot.value=pa.ilot||'';
+    const sPluvio=document.getElementById('sPluvio'); if(sPluvio)sPluvio.value=pa.pluvio||'';
+    const sFD=document.getElementById('sFD'); if(sFD)sFD.checked=!!pa.fd;
+    // panier
+    panier=pa.produits.map(p=>({...p}));
+    renderPanier(); majInstrument();
+    // changer le bouton d'enregistrement
+    const btn=document.querySelector('#pg-saisie .btn-g[onclick="enregistrerPassage()"]');
+    if(btn){btn.textContent='Enregistrer les modifications';btn.setAttribute('onclick','updatePassage()');}
+    // bandeau d'info
+    const info=document.createElement('div');
+    info.className='alert info'; info.style.margin='0 0 12px';
+    info.innerHTML=`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg><div>Modification du passage du <b>${dateFR(pa.date)}</b> · ${esc(pa.ilot||'')} — modifiez les champs puis enregistrez.</div>`;
+    const card=document.querySelector('#pg-saisie .card.pad');
+    if(card)card.insertBefore(info,card.firstChild);
+  },80);
+}
+function updatePassage(){
+  if(!panier.length){toast('La bouillie est vide.');return;}
+  const idx=passages.findIndex(p=>p.id===_editingId); if(idx<0)return;
+  const ilot=document.getElementById('sIlot').value;
+  const stadeCode=document.getElementById('sStade').value;
+  const fd=document.getElementById('sFD').checked;
+  const probs=analyseMelange(panier,stadeCode);
+  const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
+  const avert=[...surdos.map(p=>'Surdosage : '+p.n),...probs.map(p=>p.t)];
+  if(avert.length && !confirm('Avertissements :\n\n'+avert.map(a=>'• '+a).join('\n')+'\n\nEnregistrer tout de même ?'))return;
+  passages[idx]={...passages[idx],
+    date:document.getElementById('sDate').value,
+    stade:stadeCode, stadeLbl:(BBCH.find(b=>b[0]===stadeCode)||['',''])[1],
+    ilot, fd, pluvio:document.getElementById('sPluvio').value,
+    ratio:ratioIlot(ilot), sPl:ilotSurfaces(ilot).pl,
+    produits:panier.map(p=>({...p,ift:produitCompteIFT(p,fd)?p.iftBrut:null}))
+  };
+  _editingId=null; saveDB(); toast('Passage mis à jour ✓'); go('bilan');
+}
 
 /* ===================== PARCELLES ===================== */
 function renderParcelles(){
