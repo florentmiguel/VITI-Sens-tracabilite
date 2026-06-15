@@ -300,9 +300,9 @@ function hList(p){return (p.h||'').split('|').map(s=>s.trim()).filter(Boolean);}
 <script>
 /* ===================== CONFIGURATION SUPABASE ===================== */
 /* À renseigner une seule fois (voir NOTICE_supabase.md) :                */
-const SUPABASE_URL  = 'https://pwrahfceiplikdmvears.supabase.co';      // ex. https://abcd.supabase.co
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3cmFoZmNlaXBsaWtkbXZlYXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NzE4MTYsImV4cCI6MjA5NzA0NzgxNn0.c4vB4zPVkINitD0A50NTFXcyiso4i_vGPqyS3CBc98U'; // clé "anon public" (publique par conception)
-const CONSULTANT_UID= '150f1d10-56b8-44b2-83f5-8f790b0c091a';    // votre identifiant utilisateur (pour la vue consultant)
+const SUPABASE_URL  = 'https://pwrahfceiplikdmvears.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3cmFoZmNlaXBsaWtkbXZlYXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NzE4MTYsImV4cCI6MjA5NzA0NzgxNn0.c4vB4zPVkINitD0A50NTFXcyiso4i_vGPqyS3CBc98U';
+const CONSULTANT_UID= '150f1d10-56b8-44b2-83f5-8f790b0c091a';
 const SB_OK = !/^__/.test(SUPABASE_URL) && typeof supabase!=='undefined';
 const SB = SB_OK ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
@@ -321,24 +321,33 @@ async function loadDB(uid){
   if(d){
     parcelles=d.parcelles||[]; ilots=d.ilots||[]; passages=d.passages||[]; meta=d.meta||meta;
     ilot_parcelles=d.ilot_parcelles||{};
-    // migration depuis l'ancien modèle p.ilot (1:1) → many-to-many
+    let needSave=false;
+
+    // migration 1 : p.ilot (1:1) → many-to-many
     if(!Object.keys(ilot_parcelles).length && parcelles.some(p=>p.ilot)){
       ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.ilot===il.nom).map(p=>p.key);});
-      // conversion m² → ares si valeurs > 500 (heuristique)
-      parcelles.forEach(p=>{
-        if((p.cad||0)>500) p.cad=Math.round(p.cad/100*10)/10;  /* 1250 m² → 12.5 a */
-        if((p.pl||0)>500)  p.pl =Math.round(p.pl /100*10)/10;
-        delete p.ilot;
-      });
-      saveDB();
+      parcelles.forEach(p=>delete p.ilot);
+      needSave=true;
     }
+
+    // migration 2 : surfaces m² → ares (÷100)
+    // déclenché si flag v2_ares absent — s'applique à toutes les valeurs sans heuristique
+    if(!d.v2_ares && parcelles.length){
+      parcelles.forEach(p=>{
+        p.cad=Math.round((+p.cad||0)/100*10)/10;  /* ex. 1000 m² → 10.0 a */
+        p.pl =Math.round((+p.pl ||0)/100*10)/10;
+      });
+      needSave=true;
+    }
+
+    if(needSave) saveDB();
   }
 }
 let _saveTimer=null;
 function saveDB(){ syncHeader(); if(readonly||!SB||!session)return; clearTimeout(_saveTimer); _saveTimer=setTimeout(persist,700); }
 async function persist(){
   const uid=viewingUid||session.user.id;
-  const payload={parcelles,ilots,ilot_parcelles,passages,meta};
+  const payload={parcelles,ilots,ilot_parcelles,passages,meta,v2_ares:true}; /* flag migration */
   const {error}=await SB.from('traca_data').upsert({user_id:uid,payload,updated_at:new Date().toISOString()});
   if(error)toast('Erreur de sauvegarde : '+error.message);
 }
@@ -857,14 +866,14 @@ function renderIlots(){
          <span><b>${esc(p.id)}</b> — ${esc(p.com)}${p.ld?' · '+esc(p.ld):''} ${p.cep?'('+esc(p.cep)+')':''}</span>
          <span style="margin-left:auto;color:var(--mute);white-space:nowrap">${fmtS(p.pl)} a</span></label>`;
      }).join('');
-     return`<div class="card pad">
+     return`<div class="card pad" data-ilot="${esc(il.nom)}">
        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
          <div><div style="font-family:var(--display);font-size:18px;font-weight:600;color:var(--vigne)">${esc(il.nom)}</div>
            <span class="tag-pill ${il.type==='Ponctuel'?'laiton':''}">${esc(il.type)}</span></div>
          <div style="text-align:right"><div style="font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em">Ratio</div>
-           <div class="mono" style="font-family:var(--display);font-size:22px;font-weight:600;color:var(--laiton)">${fmt(r,3)}</div></div>
+           <div class="ilot-ratio mono" style="font-family:var(--display);font-size:22px;font-weight:600;color:var(--laiton)">${fmt(r,3)}</div></div>
        </div>
-       <div style="display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:10px;flex-wrap:wrap">
+       <div class="ilot-stats" style="display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:10px;flex-wrap:wrap">
          <span>${s.nb} parcelle${s.nb>1?'s':''}</span>
          <span>plantée <b class="mono" style="color:var(--ink)">${fmtS(s.pl)}</b> a (${fmt(s.pl/100,2)} ha)</span>
          <span>cadastrale <b class="mono" style="color:var(--ink)">${fmtS(s.cad)}</b> a</span></div>
@@ -882,7 +891,21 @@ function toggleParcIlot(nomIlot,key,checked){
   if(!ilot_parcelles[nomIlot])ilot_parcelles[nomIlot]=[];
   if(checked){if(!ilot_parcelles[nomIlot].includes(key))ilot_parcelles[nomIlot].push(key);}
   else{ilot_parcelles[nomIlot]=ilot_parcelles[nomIlot].filter(k=>k!==key);}
-  saveDB(); renderIlots();
+  saveDB();
+  // mise à jour visuelle sans re-rendre (évite le scroll au début)
+  const lbl=document.querySelector(`input[onchange*="'${nomIlot}','${key}'"]`)?.parentElement;
+  if(lbl) lbl.style.background=checked?'var(--vigne-soft)':'transparent';
+  // recalculer et afficher les stats de l'îlot (ratio, surfaces, nb)
+  const card=document.querySelector(`[data-ilot="${CSS.escape(nomIlot)}"]`);
+  if(card){
+    const s=ilotSurfaces(nomIlot), r=ratioIlot(nomIlot);
+    const statsEl=card.querySelector('.ilot-stats');
+    if(statsEl) statsEl.innerHTML=`<span>${s.nb} parcelle${s.nb>1?'s':''}</span>
+      <span>plantée <b class="mono" style="color:var(--ink)">${fmtS(s.pl)}</b> a (${fmt(s.pl/100,2)} ha)</span>
+      <span>cadastrale <b class="mono" style="color:var(--ink)">${fmtS(s.cad)}</b> a</span>`;
+    const ratioEl=card.querySelector('.ilot-ratio');
+    if(ratioEl) ratioEl.textContent=fmt(r,3);
+  }
 }
 function editIlot(idx){
   const il=idx!=null?ilots[idx]:{nom:'',type:'Fixe'};
