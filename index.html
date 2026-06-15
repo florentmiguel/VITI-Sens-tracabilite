@@ -696,8 +696,8 @@ function acSearch(q){
   q=(q||'').trim().toLowerCase();
   const list=document.getElementById('acList');
   if(!q){list.classList.remove('show');return;}
-  const perso=(meta.produits_perso||[]).filter(p=>p.n.toLowerCase().includes(q));
-  const ephy=EPHY.filter(p=>p.n.toLowerCase().includes(q)).slice(0,28);
+  const perso=(meta.produits_perso||[]).filter(p=>matchProd(p,q));
+  const ephy=EPHY.filter(p=>matchProd(p,q)).slice(0,28);
   const items=[
     ...perso.map(p=>{
       const lbl=['MFSC','Correcteur de carence'].includes(p.f)?p.f:'PPP perso';
@@ -1174,9 +1174,15 @@ function supprimerProduitPerso(idx){
   saveDB(); renderProduits(); toast('Produit supprimé');
 }
 
+/* recherche multi-mots : tous les mots doivent être présents (dans n'importe quel champ) */
+function matchProd(p, q){
+  if(!q) return true;
+  const hay=(p.n+' '+(p.sa||'')+' '+(p.f||'')).toLowerCase();
+  return q.trim().toLowerCase().split(/\s+/).every(w=>hay.includes(w));
+}
+
 function filterProduits(q){
-  q=(q||'').toLowerCase();
-  const res=EPHY.filter(p=>p.n.toLowerCase().includes(q)||(p.sa||'').toLowerCase().includes(q)||(p.f||'').toLowerCase().includes(q)).slice(0,200);
+  const res=EPHY.filter(p=>matchProd(p,q)).slice(0,200);
   document.getElementById('prodBody').innerHTML=res.map(p=>`<tr>
     <td><b>${esc(p.n)}</b></td>
     <td><span class="tag-pill ${TYPES[p.type]?.cat==='none'?'mute':TYPES[p.type]?.cat==='bio'?'laiton':''}">${esc((TYPES[p.type]||TYPES.autre).lbl.split(' ')[0])}</span></td>
@@ -1192,17 +1198,29 @@ function filterProduits(q){
 
 function dupliquerEphy(nom){
   const src=EPHY_BY_NAME[nom]; if(!src)return;
-  // pré-remplir le formulaire avec les données e-phy, nom vide à saisir
-  const u=src.u[0]||{};
-  const p={n:'',sa:src.sa,f:src.f,amm:src.amm,h:src.h,cmr:src.cmr,type:src.type,
-    unite:u.un||'',doseHom:u.d||'',dar:u.dar||'',znt:u.znt||''};
-  openModal(`Dupliquer "${esc(nom)}" avec un autre nom commercial`,`
+  openModal(`Dupliquer "${esc(nom)}"`,`
     <div style="background:var(--vigne-soft);border-radius:var(--rs);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:var(--vigne)">
-      Données reprises depuis e-phy. Saisissez le nouveau nom commercial et ajustez si besoin.</div>
-    <div id="formProduit"></div>
-    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="saveProduitPerso(null)">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Ajouter au référentiel</button>`);
-  renderFormProduit(p);
+      Le nouveau nom sera ajouté à la base e-phy avec exactement les mêmes caractéristiques (usages, doses, SA, mentions H…).</div>
+    <div class="field"><label>Nouveau nom commercial *</label>
+      <input id="dup_nom" placeholder="ex. BOUILLIE BORDELAISE RÉFÉRENCE" autofocus></div>
+    <div style="background:var(--craie);border-radius:var(--rs);padding:10px 13px;font-size:12px;color:var(--mute)">
+      <b style="color:var(--ink)">${esc(nom)}</b><br>
+      ${esc(src.sa||'')} · ${esc(src.f||'')} · AMM ${esc(src.amm||'—')}<br>
+      ${src.u.length} usage(s) · Mentions H : ${esc(src.h||'—')}</div>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:14px" onclick="confirmerDuplication('${esc(nom).replace(/'/g,"\\'")}')">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Ajouter à la liste e-phy</button>`);
+}
+function confirmerDuplication(nomSrc){
+  const nouveauNom=document.getElementById('dup_nom')?.value?.trim();
+  if(!nouveauNom){toast('Saisissez le nouveau nom commercial.');return;}
+  if(EPHY_BY_NAME[nouveauNom]){toast('Ce nom existe déjà dans la base.');return;}
+  const src=EPHY_BY_NAME[nomSrc]; if(!src)return;
+  // cloner avec le nouveau nom, mêmes caractéristiques complètes
+  const clone={...src, n:nouveauNom};
+  EPHY.push(clone);
+  EPHY_BY_NAME[nouveauNom]=clone;
+  closeModal(); renderProduits();
+  toast(`"${nouveauNom}" ajouté à la liste e-phy ✓`);
 }
 
 /* ===================== EXPORT / IMPORT ===================== */
