@@ -220,7 +220,7 @@ tbody tr:hover{background:var(--craie)}
     <div class="grp">Référentiels</div>
     <a data-pg="parcelles" onclick="go('parcelles')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg><span>Parcellaire</span></a>
     <a data-pg="ilots" onclick="go('ilots')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg><span>Îlots</span></a>
-    <a data-pg="produits" onclick="go('produits')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M9 3h6M10 3v6.5L5 19a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 19l-5-9.5V3"/><line x1="7.5" y1="14" x2="16.5" y2="14"/></svg><span>Produits e-phy</span></a>
+    <a data-pg="produits" onclick="go('produits')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M9 3h6M10 3v6.5L5 19a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 19l-5-9.5V3"/><line x1="7.5" y1="14" x2="16.5" y2="14"/></svg><span>Produits</span></a>
     <div class="grp">Compte</div>
     <a onclick="openSettings()"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Réglages</span></a>
     <a onclick="logout()" style="color:var(--lie)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span>Déconnexion</span></a>
@@ -614,13 +614,9 @@ function renderSaisie(){
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;background:var(--lie-soft);padding:9px 12px;border-radius:var(--rs);margin-bottom:4px">
         <input type="checkbox" id="sFD" onchange="renderPanier();majInstrument()"> <b>Lutte obligatoire Flavescence dorée</b> — passage exclu de l'IFT</label>
       <div style="border-top:1px solid var(--line);margin:12px 0 16px"></div>
-      <div class="field ac"><label>Produit e-phy (${EPHY.length} spécialités autorisées)</label>
+      <div class="field ac"><label>Produit (${EPHY.length} spécialités autorisées)</label>
         <input id="sProd" autocomplete="off" placeholder="Nom commercial…" oninput="acSearch(this.value)" onfocus="acSearch(this.value)">
         <div class="ac-list" id="acList"></div></div>
-      <div style="text-align:center;margin:-6px 0 10px">
-        <button class="btn btn-o btn-sm" onclick="ouvrirFormulaireHorsListe('ppp')" style="margin-right:6px">+ PPP hors liste e-phy</button>
-        <button class="btn btn-o btn-sm" onclick="ouvrirFormulaireHorsListe('mfsc')">+ MFSC / engrais foliaire</button>
-      </div>
       <div id="prodDetail"></div>
     </div>
     <div>
@@ -635,66 +631,7 @@ function renderSaisie(){
   </div>`;
   panier=[];curProd=null;renderPanier();majInstrument();renderProdDetail();
 }
-function ouvrirFormulaireHorsListe(mode){
-  curProd=null;
-  document.getElementById('sProd').value='';
-  document.getElementById('acList').classList.remove('show');
-  const isMFSC = mode==='mfsc';
-  document.getElementById('prodDetail').innerHTML=`
-    <div style="background:${isMFSC?'var(--laiton-soft)':'var(--lie-soft)'};border:1px solid ${isMFSC?'var(--laiton)':'var(--lie)'};border-radius:var(--rs);padding:14px;margin-bottom:4px">
-      <div style="font-weight:700;font-size:13px;color:${isMFSC?'var(--laiton)':'var(--lie)'};margin-bottom:12px">
-        ${isMFSC?'MFSC / Engrais foliaire — hors IFT':'PPP hors liste e-phy'}
-      </div>
-      <div class="row">
-        <div class="field" style="flex:2"><label>Nom commercial *</label>
-          <input id="hl_nom" placeholder="${isMFSC?'ex. FERTISTIM K, AMINO VITIS…':'ex. PRODUIT XYZ'}"></div>
-        ${isMFSC?`<div class="field"><label>Fabricant</label><input id="hl_fab" placeholder="ex. De Sangosse"></div>`
-                 :`<div class="field"><label>N° AMM (optionnel)</label><input id="hl_amm" placeholder="ex. 2012345"></div>`}
-      </div>
-      ${isMFSC?`
-        <div class="row">
-          <div class="field" style="flex:2"><label>Composition / usage</label>
-            <input id="hl_sa" placeholder="ex. Acides aminés, potassium, zinc…"></div>
-          <div class="field"><label>Dose appliquée</label>
-            <input id="hl_dose" type="text" inputmode="decimal" placeholder="0"></div>
-          <div class="field"><label>Unité</label>
-            <select id="hl_unite"><option>L/ha</option><option>kg/ha</option><option>mL/hL</option><option>g/hL</option><option>L/hL</option></select></div>
-        </div>`:`
-        <div class="row">
-          <div class="field" style="flex:2"><label>Substance(s) active(s) *</label>
-            <input id="hl_sa" placeholder="ex. cymoxanil 45 g/kg, mancozèbe 680 g/kg"></div>
-          <div class="field"><label>Fonction</label>
-            <select id="hl_fonc"><option>Fongicide</option><option>Insecticide</option><option>Acaricide</option>
-              <option>Herbicide</option><option>Attractif phéromone</option><option>Autre</option></select></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Dose homologuée *</label>
-            <input id="hl_dosehom" type="text" inputmode="decimal" placeholder="0"></div>
-          <div class="field"><label>Dose appliquée *</label>
-            <input id="hl_dose" type="text" inputmode="decimal" placeholder="0" oninput="majInstrumentHL()"></div>
-          <div class="field"><label>Unité</label>
-            <select id="hl_unite"><option>kg/ha</option><option>L/ha</option><option>g/ha</option><option>mL/ha</option></select></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>DAR (jours)</label>
-            <input id="hl_dar" type="number" min="0" placeholder="—"></div>
-          <div class="field"><label>ZNT (m)</label>
-            <select id="hl_znt"><option value="">—</option><option>5</option><option>20</option><option>50</option><option>100</option></select></div>
-          <div class="field"><label>Mentions H (séparées par |)</label>
-            <input id="hl_h" placeholder="ex. H317 | H400"></div>
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:8px">
-          <input type="checkbox" id="hl_cmr"> Produit CMR (cochez si mentions H360/H350/H340…)
-        </label>
-        <div class="field"><label>Type d'IFT</label>
-          <select id="hl_type">${Object.keys(TYPES).map(k=>`<option value="${k}">${esc(TYPES[k].lbl)}</option>`).join('')}</select></div>
-      `}
-      <button class="btn btn-l" style="width:100%;justify-content:center;margin-top:4px" onclick="ajouterHorsListe('${mode}')">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter à la bouillie</button>
-    </div>`;
-  // pré-sélection type MFSC
-  if(isMFSC) setTimeout(()=>{const t=document.getElementById('hl_type');if(t)t.value='mfsc';},10);
-}
+
 function majInstrumentHL(){
   const dose=document.getElementById('hl_dose')?.value||'';
   const doseHom=document.getElementById('hl_dosehom')?.value||'';
@@ -741,10 +678,25 @@ function acSearch(q){
   q=(q||'').trim().toLowerCase();
   const list=document.getElementById('acList');
   if(!q){list.classList.remove('show');return;}
-  const res=EPHY.filter(p=>p.n.toLowerCase().includes(q)).slice(0,30);
-  list.innerHTML=res.map(p=>`<div class="ac-item" onclick="pickProd('${esc(p.n).replace(/'/g,"\\'")}')">
-    <div>${esc(p.n)}</div><div class="sa">${esc(p.sa||'')}</div></div>`).join('')||'<div class="ac-item">Aucun résultat</div>';
+  const perso=(meta.produits_perso||[]).filter(p=>p.n.toLowerCase().includes(q));
+  const ephy=EPHY.filter(p=>p.n.toLowerCase().includes(q)).slice(0,28);
+  const items=[
+    ...perso.map(p=>`<div class="ac-item" onclick="pickProdPerso('${esc(p.n).replace(/'/g,"\\'")}')">
+      <div>${esc(p.n)} <span style="font-size:11px;color:var(--laiton);font-weight:600">${p.categorie==='mfsc'?'MFSC':'PPP perso'}</span></div>
+      <div class="sa">${esc(p.sa||'')}</div></div>`),
+    ...ephy.map(p=>`<div class="ac-item" onclick="pickProd('${esc(p.n).replace(/'/g,"\\'")}')">
+      <div>${esc(p.n)}</div><div class="sa">${esc(p.sa||'')}</div></div>`)
+  ];
+  list.innerHTML=items.join('')||'<div class="ac-item">Aucun résultat</div>';
   list.classList.add('show');
+}
+function pickProdPerso(nom){
+  const p=(meta.produits_perso||[]).find(x=>x.n===nom);
+  if(!p)return;
+  curProd={...p,_perso:true,u:p.doseHom&&p.doseHom!=='—'?[{c:'Usage',d:p.doseHom,un:p.unite,dar:p.dar,znt:p.znt}]:[]};
+  document.getElementById('sProd').value=nom;
+  document.getElementById('acList').classList.remove('show');
+  renderProdDetail();majInstrument();
 }
 function pickProd(nom){
   curProd=EPHY_BY_NAME[nom];
@@ -802,15 +754,24 @@ function majInstrument(){
 }
 function ajouterAuPanier(){
   if(!curProd){toast('Choisissez un produit.');return;}
-  const u=curUsage(),dose=document.getElementById('sDose').value;
+  const dose=document.getElementById('sDose').value;
   if(!dose){toast('Indiquez la dose appliquée.');return;}
   if(panier.length>=5){toast('5 produits maximum par passage.');return;}
   const ilot=document.getElementById('sIlot').value, ratio=ratioIlot(ilot);
   const type=document.getElementById('sType').value;
-  panier.push({n:curProd.n,sa:curProd.sa,f:curProd.f,h:curProd.h,cmr:curProd.cmr,fam:curProd.fam,type,
-    cible:u.c,doseHom:u.d,unite:u.un,doseAppli:dose,dar:u.dar,znt:u.znt,
-    iftBrut:calcIFT(dose,u.d,ratio)});
-  document.getElementById('sProd').value='';document.getElementById('prodDetail').innerHTML='';curProd=null;
+  const u=curUsage();
+  const isMFSC=curProd.type==='mfsc'||!u;
+  panier.push({
+    n:curProd.n, sa:curProd.sa, f:curProd.f, h:curProd.h, cmr:curProd.cmr,
+    fam:curProd.fam||{}, type,
+    cible:u?.c||'', doseHom:u?.d||'—', unite:u?.un||curProd.unite||'',
+    doseAppli:dose, dar:u?.dar??curProd.dar??'', znt:u?.znt??curProd.znt??'',
+    horsListe:!!curProd._perso,
+    iftBrut:(!isMFSC&&u)?calcIFT(dose,u.d,ratio):null
+  });
+  document.getElementById('sProd').value='';
+  document.getElementById('prodDetail').innerHTML='';
+  curProd=null;
   renderPanier();majInstrument();
 }
 function retirerPanier(i){panier.splice(i,1);renderPanier();majInstrument();}
@@ -1051,15 +1012,121 @@ function supprIlot(idx){
 }
 
 /* ===================== PRODUITS e-phy ===================== */
+/* produits personnalisés stockés dans meta.produits_perso */
+function getProduitsPerso(){ return meta.produits_perso||[]; }
+
 function renderProduits(){
+  const perso=getProduitsPerso();
   document.getElementById('pg-produits').innerHTML=`
-   <div class="ph"><div><div class="eyebrow">Base ANSES · e-phy</div><h2>Produits autorisés vigne</h2>
-     <div class="sub">${EPHY.length} spécialités (noms commerciaux alternatifs inclus, 1 par ligne) · doses homologuées officielles</div></div>
-     <input id="prodSearch" placeholder="Rechercher nom, substance, fonction…" style="flex:none;width:280px;padding:9px 12px;border:1px solid var(--line);border-radius:var(--rs)" oninput="filterProduits(this.value)"></div>
-   <div class="card"><div class="tbl-wrap"><table><thead><tr><th>Spécialité</th><th>Type IFT</th><th>AMM</th><th>Matière active</th><th>Usages / doses</th><th>Mentions H</th><th>CMR</th></tr></thead>
-   <tbody id="prodBody"></tbody></table></div></div>`;
+   <div class="ph"><div><div class="eyebrow">Référentiel</div><h2>Produits</h2></div>
+     <button class="btn btn-g" onclick="ajouterProduitPerso()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter un produit</button></div>
+
+   ${perso.length?`
+   <div class="card" style="margin-bottom:18px">
+     <div class="card-h"><h3>Mes produits (PPP hors liste & MFSC)</h3><span class="tag-pill mute">${perso.length}</span></div>
+     <div class="tbl-wrap"><table><thead><tr><th>Nom</th><th>Type</th><th>Substance / composition</th><th>Dose hom.</th><th>Unité</th><th>DAR</th><th>ZNT</th><th>Phrase de risque</th><th></th></tr></thead><tbody>
+     ${perso.map((p,i)=>`<tr>
+       <td><b>${esc(p.n)}</b>${p.amm?`<br><span style="font-size:11px;color:var(--mute)">AMM ${esc(p.amm)}</span>`:''}</td>
+       <td><span class="tag-pill ${TYPES[p.type]?.cat==='none'?'mute':TYPES[p.type]?.cat==='bio'?'laiton':''}">${esc((TYPES[p.type]||TYPES.autre).lbl.split(' ')[0])}</span></td>
+       <td style="font-size:12px;color:var(--mute)">${esc(p.sa||'')}</td>
+       <td class="mono">${esc(p.doseHom||'—')}</td>
+       <td>${esc(p.unite||'')}</td>
+       <td class="mono">${esc(p.dar||'—')}</td>
+       <td class="mono">${esc(p.znt||'—')}</td>
+       <td style="font-size:11.5px;color:var(--lie)">${esc(p.h||'—')}</td>
+       <td style="white-space:nowrap">
+         <button class="iconbtn" onclick="editProduitPerso(${i})" title="Modifier"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
+         <button class="iconbtn btn-danger" onclick="supprimerProduitPerso(${i})" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+       </td></tr>`).join('')}
+     </tbody></table></div></div>`:''}
+
+   <div class="card">
+     <div class="card-h"><h3>Base ANSES e-phy — ${EPHY.length} spécialités</h3>
+       <input id="prodSearch" placeholder="Rechercher nom, substance, fonction…" style="width:260px;padding:7px 11px;border:1px solid var(--line);border-radius:var(--rs);font-size:13px" oninput="filterProduits(this.value)"></div>
+     <div class="tbl-wrap"><table><thead><tr><th>Spécialité</th><th>Type IFT</th><th>AMM</th><th>Matière active</th><th>Usages / doses</th><th>Phrase de risque</th><th>CMR</th></tr></thead>
+     <tbody id="prodBody"></tbody></table></div></div>`;
   filterProduits('');
 }
+
+function ajouterProduitPerso(idx){
+  const p=idx!=null?getProduitsPerso()[idx]:null;
+  openModal(p?'Modifier le produit':'Ajouter un produit',`
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn ${!p||p.categorie!=='mfsc'?'btn-g':'btn-o'}" id="tabPPP" onclick="switchTabProduit('ppp')" style="flex:1;justify-content:center">PPP hors liste</button>
+      <button class="btn ${p?.categorie==='mfsc'?'btn-g':'btn-o'}" id="tabMFSC" onclick="switchTabProduit('mfsc')" style="flex:1;justify-content:center">MFSC / Engrais foliaire</button>
+    </div>
+    <div id="formProduit"></div>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="saveProduitPerso(${idx??'null'})">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>${p?'Enregistrer les modifications':'Ajouter au référentiel'}</button>`,
+  );
+  switchTabProduit(p?.categorie==='mfsc'?'mfsc':'ppp', p);
+}
+function editProduitPerso(idx){ ajouterProduitPerso(idx); }
+
+function switchTabProduit(mode, p){
+  document.getElementById('tabPPP').className='btn '+(mode==='ppp'?'btn-g':'btn-o');
+  document.getElementById('tabMFSC').className='btn '+(mode==='mfsc'?'btn-g':'btn-o');
+  document.getElementById('tabPPP').style.flex='1';document.getElementById('tabPPP').style.justifyContent='center';
+  document.getElementById('tabMFSC').style.flex='1';document.getElementById('tabMFSC').style.justifyContent='center';
+  const isMFSC=mode==='mfsc';
+  document.getElementById('formProduit').innerHTML=`
+    <input type="hidden" id="hl_cat" value="${mode}">
+    <div class="row">
+      <div class="field" style="flex:2"><label>Nom commercial *</label>
+        <input id="hl_nom" value="${esc(p?.n||'')}" placeholder="${isMFSC?'ex. FERTISTIM K, AMINO VITIS…':'ex. PRODUIT XYZ'}"></div>
+      ${isMFSC
+        ?`<div class="field"><label>Fabricant</label><input id="hl_fab" value="${esc(p?.fabricant||'')}" placeholder="ex. De Sangosse"></div>`
+        :`<div class="field"><label>N° AMM</label><input id="hl_amm" value="${esc(p?.amm||'')}" placeholder="optionnel"></div>`}
+    </div>
+    <div class="row">
+      <div class="field" style="flex:2"><label>${isMFSC?'Composition / usage':'Substance(s) active(s) *'}</label>
+        <input id="hl_sa" value="${esc(p?.sa||'')}" placeholder="${isMFSC?'ex. Acides aminés, potassium…':'ex. cymoxanil 45 g/kg'}"></div>
+      ${isMFSC?'':`<div class="field"><label>Fonction</label>
+        <select id="hl_fonc">${['Fongicide','Insecticide','Acaricide','Herbicide','Attractif phéromone','Autre'].map(f=>`<option ${p?.f===f?'selected':''}>${f}</option>`).join('')}</select></div>`}
+    </div>
+    ${isMFSC?'':`
+    <div class="row">
+      <div class="field"><label>Dose homologuée *</label><input id="hl_dosehom" value="${esc(p?.doseHom||'')}" type="text" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Unité</label>
+        <select id="hl_unite">${['kg/ha','L/ha','g/ha','mL/ha'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
+      <div class="field"><label>DAR (jours)</label><input id="hl_dar" value="${esc(p?.dar||'')}" type="number" min="0" placeholder="—"></div>
+      <div class="field"><label>ZNT (m)</label>
+        <select id="hl_znt">${['','5','20','50','100'].map(z=>`<option ${p?.znt==z?'selected':''}>${z||'—'}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Phrases de risque (séparées par |)</label>
+      <input id="hl_h" value="${esc(p?.h||'')}" placeholder="ex. H317 | H400 | H410"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:10px">
+      <input type="checkbox" id="hl_cmr" ${p?.cmr==='OUI'?'checked':''}> Produit CMR</label>
+    <div class="field"><label>Type d'IFT</label>
+      <select id="hl_type">${Object.keys(TYPES).map(k=>`<option value="${k}" ${(p?.type||'fongicide')===k?'selected':''}>${esc(TYPES[k].lbl)}</option>`).join('')}</select></div>
+    `}`;
+  if(isMFSC) setTimeout(()=>{const t=document.getElementById('hl_type');if(t)t.value='mfsc';},10);
+}
+
+function saveProduitPerso(idx){
+  const g=id=>document.getElementById(id)?.value?.trim()||'';
+  const cat=g('hl_cat'), isMFSC=cat==='mfsc';
+  const nom=g('hl_nom'); if(!nom){toast('Le nom est obligatoire.');return;}
+  if(!isMFSC && !g('hl_sa')){toast('Indiquez la substance active.');return;}
+  if(!isMFSC && !g('hl_dosehom')){toast('Indiquez la dose homologuée.');return;}
+  const prod=isMFSC
+    ?{n:nom,sa:g('hl_sa'),f:'MFSC/Engrais foliaire',h:'',cmr:'NON',fam:{},type:'mfsc',
+      fabricant:g('hl_fab'),unite:g('hl_unite')||'L/ha',doseHom:'—',dar:'',znt:'',categorie:'mfsc',horsListe:true}
+    :{n:nom,sa:g('hl_sa'),f:g('hl_fonc'),h:g('hl_h'),cmr:document.getElementById('hl_cmr')?.checked?'OUI':'NON',
+      fam:{},type:g('hl_type'),amm:g('hl_amm'),unite:g('hl_unite'),
+      doseHom:g('hl_dosehom'),dar:g('hl_dar'),znt:g('hl_znt'),categorie:'ppp',horsListe:true};
+  if(!meta.produits_perso) meta.produits_perso=[];
+  if(idx===null||idx==null) meta.produits_perso.push(prod);
+  else meta.produits_perso[idx]=prod;
+  saveDB(); closeModal(); renderProduits();
+  toast(isMFSC?'MFSC enregistré':'PPP enregistré');
+}
+function supprimerProduitPerso(idx){
+  if(!confirm('Supprimer ce produit ?'))return;
+  meta.produits_perso.splice(idx,1);
+  saveDB(); renderProduits(); toast('Produit supprimé');
+}
+
 function filterProduits(q){
   q=(q||'').toLowerCase();
   const res=EPHY.filter(p=>p.n.toLowerCase().includes(q)||(p.sa||'').toLowerCase().includes(q)||(p.f||'').toLowerCase().includes(q)).slice(0,200);
