@@ -300,9 +300,9 @@ function hList(p){return (p.h||'').split('|').map(s=>s.trim()).filter(Boolean);}
 <script>
 /* ===================== CONFIGURATION SUPABASE ===================== */
 /* À renseigner une seule fois (voir NOTICE_supabase.md) :                */
-const SUPABASE_URL  = '__SUPABASE_URL__';      // ex. https://abcd.supabase.co
-const SUPABASE_ANON = '__SUPABASE_ANON_KEY__'; // clé "anon public" (publique par conception)
-const CONSULTANT_UID= '__CONSULTANT_UID__';    // votre identifiant utilisateur (pour la vue consultant)
+const SUPABASE_URL  = 'https://pwrahfceiplikdmvears.supabase.co';      // ex. https://abcd.supabase.co
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3cmFoZmNlaXBsaWtkbXZlYXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NzE4MTYsImV4cCI6MjA5NzA0NzgxNn0.c4vB4zPVkINitD0A50NTFXcyiso4i_vGPqyS3CBc98U'; // clé "anon public" (publique par conception)
+const CONSULTANT_UID= '150f1d10-56b8-44b2-83f5-8f790b0c091a';    // votre identifiant utilisateur (pour la vue consultant)
 const SB_OK = !/^__/.test(SUPABASE_URL) && typeof supabase!=='undefined';
 const SB = SB_OK ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
