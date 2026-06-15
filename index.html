@@ -172,6 +172,7 @@ tbody tr:hover{background:var(--craie)}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -540,9 +541,12 @@ let clientsCache=[];
 function iftFromPayload(d){
   const parc=d.parcelles||[], pass=d.passages||[], ip=d.ilot_parcelles||{};
   function plIlot(nom){const keys=ip[nom]||[];return parc.filter(p=>keys.includes(p.key)).reduce((s,p)=>s+(+p.pl||0),0);}
-  const St=parc.reduce((s,p)=>s+(+p.pl||0),0)||1; let a={h:0,hh:0,bio:0};
-  pass.forEach(pa=>{const sPl=pa.sPl||plIlot(pa.ilot);const w=(sPl||0)/St;
-    (pa.produits||[]).forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});});
+  const St=parc.reduce((s,p)=>s+(+p.pl||0),0); let a={h:0,hh:0,bio:0};
+  pass.forEach(pa=>{
+    const sPl=pa.sPl||plIlot(pa.ilot);
+    const w=(St>0 && sPl>0)?sPl/St:1;
+    (pa.produits||[]).forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});
+  });
   return a;
 }
 async function renderClients(){
@@ -610,9 +614,13 @@ function renderSaisie(){
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;background:var(--lie-soft);padding:9px 12px;border-radius:var(--rs);margin-bottom:4px">
         <input type="checkbox" id="sFD" onchange="renderPanier();majInstrument()"> <b>Lutte obligatoire Flavescence dorée</b> — passage exclu de l'IFT</label>
       <div style="border-top:1px solid var(--line);margin:12px 0 16px"></div>
-      <div class="field ac"><label>Produit (recherche e-phy — ${EPHY.length} spécialités)</label>
+      <div class="field ac"><label>Produit e-phy (${EPHY.length} spécialités autorisées)</label>
         <input id="sProd" autocomplete="off" placeholder="Nom commercial…" oninput="acSearch(this.value)" onfocus="acSearch(this.value)">
         <div class="ac-list" id="acList"></div></div>
+      <div style="text-align:center;margin:-6px 0 10px">
+        <button class="btn btn-o btn-sm" onclick="ouvrirFormulaireHorsListe('ppp')" style="margin-right:6px">+ PPP hors liste e-phy</button>
+        <button class="btn btn-o btn-sm" onclick="ouvrirFormulaireHorsListe('mfsc')">+ MFSC / engrais foliaire</button>
+      </div>
       <div id="prodDetail"></div>
     </div>
     <div>
@@ -626,6 +634,108 @@ function renderSaisie(){
     </div>
   </div>`;
   panier=[];curProd=null;renderPanier();majInstrument();renderProdDetail();
+}
+function ouvrirFormulaireHorsListe(mode){
+  curProd=null;
+  document.getElementById('sProd').value='';
+  document.getElementById('acList').classList.remove('show');
+  const isMFSC = mode==='mfsc';
+  document.getElementById('prodDetail').innerHTML=`
+    <div style="background:${isMFSC?'var(--laiton-soft)':'var(--lie-soft)'};border:1px solid ${isMFSC?'var(--laiton)':'var(--lie)'};border-radius:var(--rs);padding:14px;margin-bottom:4px">
+      <div style="font-weight:700;font-size:13px;color:${isMFSC?'var(--laiton)':'var(--lie)'};margin-bottom:12px">
+        ${isMFSC?'MFSC / Engrais foliaire — hors IFT':'PPP hors liste e-phy'}
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>Nom commercial *</label>
+          <input id="hl_nom" placeholder="${isMFSC?'ex. FERTISTIM K, AMINO VITIS…':'ex. PRODUIT XYZ'}"></div>
+        ${isMFSC?`<div class="field"><label>Fabricant</label><input id="hl_fab" placeholder="ex. De Sangosse"></div>`
+                 :`<div class="field"><label>N° AMM (optionnel)</label><input id="hl_amm" placeholder="ex. 2012345"></div>`}
+      </div>
+      ${isMFSC?`
+        <div class="row">
+          <div class="field" style="flex:2"><label>Composition / usage</label>
+            <input id="hl_sa" placeholder="ex. Acides aminés, potassium, zinc…"></div>
+          <div class="field"><label>Dose appliquée</label>
+            <input id="hl_dose" type="text" inputmode="decimal" placeholder="0"></div>
+          <div class="field"><label>Unité</label>
+            <select id="hl_unite"><option>L/ha</option><option>kg/ha</option><option>mL/hL</option><option>g/hL</option><option>L/hL</option></select></div>
+        </div>`:`
+        <div class="row">
+          <div class="field" style="flex:2"><label>Substance(s) active(s) *</label>
+            <input id="hl_sa" placeholder="ex. cymoxanil 45 g/kg, mancozèbe 680 g/kg"></div>
+          <div class="field"><label>Fonction</label>
+            <select id="hl_fonc"><option>Fongicide</option><option>Insecticide</option><option>Acaricide</option>
+              <option>Herbicide</option><option>Attractif phéromone</option><option>Autre</option></select></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Dose homologuée *</label>
+            <input id="hl_dosehom" type="text" inputmode="decimal" placeholder="0"></div>
+          <div class="field"><label>Dose appliquée *</label>
+            <input id="hl_dose" type="text" inputmode="decimal" placeholder="0" oninput="majInstrumentHL()"></div>
+          <div class="field"><label>Unité</label>
+            <select id="hl_unite"><option>kg/ha</option><option>L/ha</option><option>g/ha</option><option>mL/ha</option></select></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>DAR (jours)</label>
+            <input id="hl_dar" type="number" min="0" placeholder="—"></div>
+          <div class="field"><label>ZNT (m)</label>
+            <select id="hl_znt"><option value="">—</option><option>5</option><option>20</option><option>50</option><option>100</option></select></div>
+          <div class="field"><label>Mentions H (séparées par |)</label>
+            <input id="hl_h" placeholder="ex. H317 | H400"></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:8px">
+          <input type="checkbox" id="hl_cmr"> Produit CMR (cochez si mentions H360/H350/H340…)
+        </label>
+        <div class="field"><label>Type d'IFT</label>
+          <select id="hl_type">${Object.keys(TYPES).map(k=>`<option value="${k}">${esc(TYPES[k].lbl)}</option>`).join('')}</select></div>
+      `}
+      <button class="btn btn-l" style="width:100%;justify-content:center;margin-top:4px" onclick="ajouterHorsListe('${mode}')">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter à la bouillie</button>
+    </div>`;
+  // pré-sélection type MFSC
+  if(isMFSC) setTimeout(()=>{const t=document.getElementById('hl_type');if(t)t.value='mfsc';},10);
+}
+function majInstrumentHL(){
+  const dose=document.getElementById('hl_dose')?.value||'';
+  const doseHom=document.getElementById('hl_dosehom')?.value||'';
+  const ilot=document.getElementById('sIlot')?.value;
+  const ratio=ilot?ratioIlot(ilot):1;
+  if(dose&&doseHom){
+    const ift=calcIFT(dose,doseHom,ratio);
+    const surd=estSurdosage(dose,doseHom);
+    document.getElementById('instrument').innerHTML=`
+      <div class="lbl">IFT estimé · PPP hors liste</div>
+      <div class="ift-val mono">${ift==null?'—':fmt(ift)}</div>
+      <div class="ift-eq">= ( <b>${fmt(parseFloat(String(dose).replace(',','.'))/parseFloat(String(doseHom).replace(',','.')),3)}</b> dose appli/hom ) × ( <b>${fmt(ratio,3)}</b> ratio )</div>
+      ${surd?'<div style="margin-top:10px;background:rgba(138,45,59,.35);border-radius:7px;padding:8px;font-size:12px;font-weight:600">⚠ Surdosage</div>':''}`;
+  }
+}
+function ajouterHorsListe(mode){
+  const g=id=>document.getElementById(id)?.value?.trim()||'';
+  const nom=g('hl_nom');
+  if(!nom){toast('Indiquez le nom du produit.');return;}
+  if(panier.length>=5){toast('5 produits maximum par passage.');return;}
+  const ilot=document.getElementById('sIlot').value, ratio=ratioIlot(ilot);
+  const isMFSC=mode==='mfsc';
+  if(isMFSC){
+    panier.push({n:nom,sa:g('hl_sa'),f:'MFSC/Engrais foliaire',h:'',cmr:'NON',
+      fam:{},type:'mfsc',fabricant:g('hl_fab'),
+      cible:'',doseHom:'—',unite:g('hl_unite'),doseAppli:g('hl_dose'),
+      dar:'',znt:'',iftBrut:null,horsListe:true});
+  } else {
+    const doseHom=g('hl_dosehom'), dose=g('hl_dose');
+    if(!doseHom||!dose){toast('Indiquez dose homologuée et dose appliquée.');return;}
+    const type=g('hl_type');
+    const cmr=document.getElementById('hl_cmr')?.checked?'OUI':'NON';
+    panier.push({n:nom,sa:g('hl_sa'),f:g('hl_fonc'),h:g('hl_h'),cmr,
+      fam:{},type,amm:g('hl_amm'),
+      cible:'',doseHom,unite:g('hl_unite'),doseAppli:dose,
+      dar:g('hl_dar'),znt:g('hl_znt'),
+      iftBrut:calcIFT(dose,doseHom,ratio),horsListe:true});
+  }
+  document.getElementById('prodDetail').innerHTML='';
+  renderPanier();majInstrument();
+  toast(`${isMFSC?'MFSC':'PPP hors liste'} ajouté à la bouillie`);
 }
 function acSearch(q){
   q=(q||'').trim().toLowerCase();
@@ -713,8 +823,10 @@ function renderPanier(){
   if(!panier.length){box.innerHTML='<div style="color:var(--mute);font-size:13px;text-align:center;padding:14px 0">Aucun produit. Recherchez une spécialité et ajoutez-la.</div>';
     document.getElementById('cmrAlert').innerHTML='';return;}
   box.innerHTML=panier.map((p,i)=>{const ift=panierIFT(p,fd);const sd=estSurdosage(p.doseAppli,p.doseHom);return`<div class="prod-line" ${sd?'style="border-color:var(--lie);background:var(--lie-soft)"':''}>
-    <div><div class="nm">${esc(p.n)} <span class="tag-pill ${TYPES[p.type].cat==='none'?'mute':TYPES[p.type].cat==='bio'?'laiton':''}" style="font-size:10px">${esc(TYPES[p.type].lbl.split(' ')[0])}</span>${sd?' <span class="tag-pill lie" style="font-size:10px">surdosage</span>':''}</div>
-      <div class="meta">${esc(p.doseAppli)}/${esc(p.doseHom)} ${esc(p.unite||'')} · ${esc(p.cible||'')}</div></div>
+    <div><div class="nm">${esc(p.n)}
+      <span class="tag-pill ${TYPES[p.type].cat==='none'?'mute':TYPES[p.type].cat==='bio'?'laiton':''}" style="font-size:10px">${esc(TYPES[p.type].lbl.split(' ')[0])}</span>
+      ${sd?' <span class="tag-pill lie" style="font-size:10px">surdosage</span>':''}</div>
+      <div class="meta">${esc(p.doseAppli)}${p.doseHom&&p.doseHom!=='—'?'/'+esc(p.doseHom):''} ${esc(p.unite||'')} · ${esc(p.cible||p.sa||'')}</div></div>
     <span class="ift mono">${ift==null?'<span style="color:var(--mute);font-size:11px">hors IFT</span>':fmt(ift,2)}</span>
     <button class="iconbtn btn-danger" onclick="retirerPanier(${i})" title="Retirer"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
   </div>`;}).join('');
@@ -746,10 +858,12 @@ function enregistrerPassage(){
 /* ===================== BILAN ===================== */
 function sTotExploit(){return parcelles.reduce((s,p)=>s+(+p.pl||0),0);} /* en ares */
 function iftExploit(){
-  const St=sTotExploit()||1; let a={h:0,hh:0,bio:0};
+  const St=sTotExploit(); let a={h:0,hh:0,bio:0};
   passages.forEach(pa=>{
     const sPl=pa.sPl||ilotSurfaces(pa.ilot).pl||0;
-    const w=sPl/St;
+    // si surface totale nulle OU surface de l'îlot nulle (pas de parcelles affectées)
+    // → on utilise un poids égal de 1 pour ne pas perdre l'IFT
+    const w = (St>0 && sPl>0) ? sPl/St : 1;
     pa.produits.forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});
   });
   return a;
@@ -768,7 +882,7 @@ function renderBilan(){
      <div class="sub">${passages.length} passages · surface exploitation ${fmt(St/100,2)} ha</div></div>
      <div class="row" style="flex:none"><button class="btn btn-o" onclick="exportJSON()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Sauvegarde JSON</button>
        <button class="btn btn-o" onclick="importJSON()">Importer</button>
-       <button class="btn btn-l" onclick="exportCSV()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button></div></div>
+       <button class="btn btn-l" onclick="exportXLSX()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export Excel</button></div></div>
 
    <div class="card pad" style="margin-bottom:16px;background:linear-gradient(160deg,#FAFBF8,#F1F2EC)">
      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--laiton);font-weight:600;margin-bottom:4px">IFT cumulé — lissé sur la surface totale de l'exploitation</div>
@@ -971,12 +1085,128 @@ function importJSON(){
     rd.onload=()=>{try{const d=JSON.parse(rd.result);parcelles=d.parcelles||parcelles;ilots=d.ilots||ilots;ilot_parcelles=d.ilot_parcelles||ilot_parcelles;passages=d.passages||passages;meta=d.meta||meta;saveDB();toast('Données importées');go('dash');}catch(err){toast('Fichier illisible');}};rd.readAsText(f);};
   inp.click();
 }
-function exportCSV(){
-  let rows=[['Date','Ilot','Stade','Ratio','LutteFD','Specialite','Type','Matiere active','Dose appli','Dose hom','Unite','Cible','DAR','ZNT','Mentions H','IFT']];
+function exportCSV(){ /* conservé pour compatibilité JSON import */
+  let rows=[['Date','Ilot','Stade','Ratio','LutteFD','Specialite','Type','Matiere active','Dose appli','Dose hom','Unite','Cible','DAR','ZNT','Phrase de Risque','IFT','Hors liste']];
   passages.sort((a,b)=>(a.date||'').localeCompare(b.date||'')).forEach(pa=>pa.produits.forEach(p=>{
-    rows.push([pa.date,pa.ilot,pa.stadeLbl||pa.stade,String(pa.ratio||1).replace('.',','),pa.fd?'OUI':'',p.n,(TYPES[p.type]||TYPES.autre).lbl,p.sa,String(p.doseAppli).replace('.',','),String(p.doseHom).replace('.',','),p.unite,p.cible,p.dar,p.znt,p.h,p.ift==null?'':String(p.ift).replace('.',',')]);}));
+    rows.push([pa.date,pa.ilot,pa.stadeLbl||pa.stade,String(pa.ratio||1).replace('.',','),pa.fd?'OUI':'',p.n,(TYPES[p.type]||TYPES.autre).lbl,p.sa,String(p.doseAppli).replace('.',','),String(p.doseHom||'').replace('.',','),p.unite,p.cible,p.dar,p.znt,p.h,p.ift==null?'':String(p.ift).replace('.',','),p.horsListe?'OUI':'']);}));
   const csv=rows.map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(';')).join('\r\n');
-  dl(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),`VITI_Sens_traca_${meta.campagne}.csv`);toast('Export CSV téléchargé');
+  dl(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),`VITI_Sens_traca_${meta.campagne}.csv`);
+}
+
+function exportXLSX(){
+  if(typeof XLSX==='undefined'){toast('Chargement Excel en cours…');return;}
+  const TYPE_CAT={Fongicide:'hh',Insecticide:'hh',Acaricide:'hh',Herbicide:'h','Biocontrôle':'bio'};
+  // ── données ──────────────────────────────────────────────────────────────
+  const HDR=['Date','Îlot','Stade','Ratio','Lutte FD','Spécialité','Type','Matière active',
+             'Dose appli','Dose hom','Unité','Cible','DAR','ZNT','Phrase de Risque','IFT','Hors liste'];
+  const COL_W=[10,10,11,5,7,18,10,18,8,8,5,18,5,5,16,6,7]; // largeurs approx en caractères
+  const sorted=[...passages].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  let wsData=[], merges=[], rowStyles=[];
+  // en-tête
+  wsData.push(HDR); rowStyles.push('header');
+  let ift_h=0,ift_hh=0,ift_bio=0;
+  let prevIlot=null;
+  sorted.forEach(pa=>{
+    // séparateur inter-îlots
+    if(prevIlot && prevIlot!==pa.ilot){wsData.push([]); rowStyles.push('sep_ilot');}
+    // ligne groupe passage
+    const grpLabel=`  ▸  ${dateFR(pa.date)}  ·  ${pa.ilot||''}  ·  ${pa.stadeLbl||pa.stade||''}  ·  ratio ${String((pa.ratio||1).toFixed?pa.ratio.toFixed(3):pa.ratio)}`;
+    wsData.push([grpLabel]); rowStyles.push('group');
+    // produits
+    pa.produits.forEach(p=>{
+      const isMFSC=p.type==='mfsc'||p.type==='adjuvant'||p.type==='autre';
+      wsData.push([
+        dateFR(pa.date), pa.ilot, pa.stadeLbl||pa.stade,
+        pa.ratio?+(pa.ratio.toFixed?pa.ratio.toFixed(3):pa.ratio):1,
+        pa.fd?'OUI':'', p.n, (TYPES[p.type]||TYPES.autre).lbl, p.sa||'',
+        p.doseAppli||'', isMFSC?'—':(p.doseHom||''), p.unite||'',
+        p.cible||'', isMFSC?'—':(p.dar??''), isMFSC?'—':(p.znt||''),
+        p.h||'', p.ift!=null?+Number(p.ift).toFixed(3):'',
+        p.horsListe?'OUI':''
+      ]);
+      rowStyles.push(pa.fd?'fd':(p.horsListe?'hl':'data'));
+      if(p.ift!=null && !pa.fd){
+        const cat=TYPE_CAT[(TYPES[p.type]||TYPES.autre).lbl]||'hh';
+        if(cat==='h')ift_h+=p.ift; else if(cat==='bio')ift_bio+=p.ift; else ift_hh+=p.ift;
+      }
+    });
+    // ligne vide passage
+    wsData.push([]); rowStyles.push('sep_pass');
+    prevIlot=pa.ilot;
+  });
+  // bilan
+  wsData.push([]); rowStyles.push('sep_pass');
+  wsData.push(['BILAN IFT — EXPLOITATION']); rowStyles.push('bilan_titre');
+  wsData.push(['IFT HERBICIDE','','','','IFT HORS HERBICIDE','','','','IFT BIOCONTRÔLE','','','','IFT TOTAL (hors bio)']); rowStyles.push('bilan_hdr');
+  wsData.push([+ift_h.toFixed(3),'','','',+ift_hh.toFixed(3),'','','',+ift_bio.toFixed(3),'','','',+(ift_h+ift_hh).toFixed(3)]); rowStyles.push('bilan_val');
+
+  // ── SheetJS : créer la feuille ────────────────────────────────────────────
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=COL_W.map(w=>({wch:w}));
+
+  // hauteurs de lignes
+  ws['!rows']=rowStyles.map(s=>({
+    hpt: s==='header'?22:s==='group'?16:s==='sep_pass'?8:s==='sep_ilot'?6:
+         s==='bilan_titre'?20:s==='bilan_hdr'?16:s==='bilan_val'?24:34
+  }));
+
+  // mise en forme cellule par cellule
+  const nc=HDR.length;
+  rowStyles.forEach((s,ri)=>{
+    const R=ri;
+    for(let C=0;C<(s.startsWith('bilan')||s==='group'?nc:nc);C++){
+      const addr=XLSX.utils.encode_cell({r:R,c:C});
+      if(!ws[addr]) ws[addr]={v:'',t:'s'};
+      if(!ws[addr].s) ws[addr].s={};
+      const cell=ws[addr];
+      const thin={style:'thin',color:{rgb:'D5D8CC'}};
+      const brd={top:thin,bottom:thin,left:thin,right:thin};
+      if(s==='header'){
+        cell.s={fill:{fgColor:{rgb:'1F3A2E'}},font:{bold:true,color:{rgb:'F1F2EC'},sz:9},
+          alignment:{horizontal:'center',vertical:'center',wrapText:true},border:brd};
+      } else if(s==='group'){
+        cell.s={fill:{fgColor:{rgb:'E8EEE8'}},font:{bold:true,sz:9,color:{rgb:'1F3A2E'}},
+          alignment:{vertical:'center'}};
+      } else if(s==='fd'){
+        cell.s={fill:{fgColor:{rgb:'F6E6E8'}},font:{sz:8},alignment:{vertical:'top',wrapText:true},border:brd};
+      } else if(s==='hl'){
+        cell.s={fill:{fgColor:{rgb:'F3EAD4'}},font:{sz:8},alignment:{vertical:'top',wrapText:true},border:brd};
+      } else if(s==='data'){
+        cell.s={font:{sz:8},alignment:{vertical:'top',wrapText:true},border:brd};
+        // phrase de risque CMR en bordeaux
+        if(C===14 && cell.v && /H30[01]|H31[01]|H33[01]|H35[01]|H36[01]/.test(String(cell.v))){
+          cell.s.font={sz:8,bold:true,color:{rgb:'8A2D3B'}};
+        }
+      } else if(s==='bilan_titre'){
+        cell.s={fill:{fgColor:{rgb:'1F3A2E'}},font:{bold:true,sz:11,color:{rgb:'F1F2EC'}},
+          alignment:{horizontal:'center',vertical:'center'}};
+      } else if(s==='bilan_hdr'){
+        const clrs=['F3EAD4','E8EEE8','D4E6DC','F6E6E8'];
+        const fi=Math.floor(C/(nc/4));
+        cell.s={fill:{fgColor:{rgb:clrs[fi]||'E8EEE8'}},font:{bold:true,sz:8},
+          alignment:{horizontal:'center',vertical:'center'}};
+      } else if(s==='bilan_val'){
+        const clrs=['F3EAD4','E8EEE8','D4E6DC','F6E6E8'];
+        const fi=Math.floor(C/(nc/4));
+        cell.s={fill:{fgColor:{rgb:clrs[fi]||'E8EEE8'}},font:{bold:true,sz:13},
+          alignment:{horizontal:'center',vertical:'center'}};
+      }
+    }
+  });
+
+  // figer ligne 1, filtre auto
+  ws['!freeze']={xSplit:0,ySplit:1};
+  ws['!autofilter']={ref:`A1:${XLSX.utils.encode_cell({r:0,c:nc-1})}`};
+
+  // mise en page A4 paysage
+  ws['!pageSetup']={orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0};
+  ws['!margins']={left:0.39,right:0.39,top:0.39,bottom:0.39,header:0.2,footer:0.2};
+  ws['!printTitles']={rows:{s:{r:0},e:{r:0}}};
+
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Bilan IFT');
+  XLSX.writeFile(wb,`VITI_Sens_Bilan_${meta.client?meta.client.replace(/\s+/g,'_')+'_':''}_${meta.campagne}.xlsx`);
+  toast('Export Excel téléchargé');
 }
 function dl(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href);}
 
