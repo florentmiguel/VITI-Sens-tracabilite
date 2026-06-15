@@ -865,7 +865,8 @@ function renderBilan(){
      <div class="sub">${passages.length} passages · surface exploitation ${fmt(St/100,2)} ha</div></div>
      <div class="row" style="flex:none"><button class="btn btn-o" onclick="exportJSON()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Sauvegarde JSON</button>
        <button class="btn btn-o" onclick="importJSON()">Importer</button>
-       <button class="btn btn-l" onclick="exportXLSX()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export Excel</button></div></div>
+       <button class="btn btn-l" onclick="exportXLSX()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export Excel</button>
+       <button class="btn btn-g" onclick="registrePDF()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg>Registre PDF</button></div></div>
 
    <div class="card pad" style="margin-bottom:16px;background:linear-gradient(160deg,#FAFBF8,#F1F2EC)">
      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--laiton);font-weight:600;margin-bottom:4px">IFT cumulé — lissé sur la surface totale de l'exploitation</div>
@@ -1407,6 +1408,106 @@ function exportXLSX(){
   XLSX.utils.book_append_sheet(wb,ws,'Bilan IFT');
   XLSX.writeFile(wb,`VITI_Sens_Bilan_${meta.client?meta.client.replace(/\s+/g,'_')+'_':''}_${meta.campagne}.xlsx`);
   toast('Export Excel téléchargé');
+}
+function registrePDF(){
+  if(!passages.length){toast('Aucun passage enregistré à imprimer.');return;}
+  const sorted=[...passages].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const ammOf=p=>p.amm||EPHY_BY_NAME[p.n]?.amm||'—';
+  const recolteDes=(date,dar)=>{
+    const d=parseInt(String(dar),10);
+    if(!date||isNaN(d))return '—';
+    const dt=new Date(date+'T00:00:00'); if(isNaN(dt.getTime()))return '—';
+    dt.setDate(dt.getDate()+d);
+    return dateFR(dt.toISOString().slice(0,10));
+  };
+  const parcLignes=nom=>{
+    const ps=parcDansIlot(nom);
+    if(!ps.length)return '<span class="muted">aucune parcelle affectée à cet îlot</span>';
+    return ps.map(p=>esc([p.id,p.ld,p.cep].filter(Boolean).join(' · ')||'parcelle')).join(' ; ');
+  };
+  let blocs='';
+  sorted.forEach(pa=>{
+    const s=ilotSurfaces(pa.ilot);
+    const rows=pa.produits.map(p=>{
+      const isMFSC=p.type==='mfsc'||p.type==='adjuvant'||p.type==='autre';
+      return '<tr>'
+        +'<td class="prod"><b>'+esc(p.n)+'</b>'+((p.cmr||'').toUpperCase()==='OUI'?' <span class="cmr">CMR</span>':'')+(p.horsListe?' <span class="hl">hors liste</span>':'')+'</td>'
+        +'<td class="mono">'+esc(ammOf(p))+'</td>'
+        +'<td class="sa">'+esc(p.sa||'—')+'</td>'
+        +'<td>'+esc(p.cible||'—')+'</td>'
+        +'<td class="mono nw">'+esc(p.doseAppli||'—')+' '+esc(p.unite||'')+'</td>'
+        +'<td class="mono ctr">'+(isMFSC?'—':esc(p.dar??'—'))+'</td>'
+        +'<td class="mono nw">'+(isMFSC?'—':recolteDes(pa.date,p.dar))+'</td>'
+        +'<td class="mono ctr">'+esc(p.znt||'—')+'</td>'
+        +'<td class="risk">'+esc(p.h||'—')+'</td>'
+        +'</tr>';
+    }).join('');
+    blocs+='<div class="bloc">'
+      +'<table class="hb"><tr>'
+      +'<td><span class="lbl">Date du traitement</span><b>'+esc(dateFR(pa.date))+'</b></td>'
+      +'<td><span class="lbl">Îlot traité</span><b>'+esc(pa.ilot||'—')+'</b>'+(pa.fd?'<div class="fd">Lutte obligatoire Flavescence dorée</div>':'')+'</td>'
+      +'<td><span class="lbl">Stade phénologique (BBCH)</span>'+esc(pa.stadeLbl||pa.stade||'—')+'</td>'
+      +'<td><span class="lbl">Surface traitée</span><b class="mono">'+fmt(s.pl/100,2)+' ha</b> <span class="s2">('+fmtS(s.pl)+' a plantées / '+fmtS(s.cad)+' a cad.)</span></td>'
+      +(pa.pluvio?'<td><span class="lbl">Pluviométrie</span>'+esc(pa.pluvio)+' mm</td>':'<td></td>')
+      +'</tr>'
+      +'<tr><td colspan="5" class="parc"><span class="lbl">Parcelles concernées — culture : Vigne (réf. · lieu-dit · cépage)</span>'+parcLignes(pa.ilot)+'</td></tr>'
+      +'</table>'
+      +'<table class="pr"><thead><tr>'
+      +'<th style="width:16%">Spécialité commerciale</th><th style="width:8%">N° AMM</th>'
+      +'<th style="width:21%">Substance(s) active(s)</th><th style="width:13%">Cible / ennemi visé</th>'
+      +'<th style="width:9%">Dose appliquée</th><th style="width:5%">DAR (j)</th>'
+      +'<th style="width:9%">Récolte dès</th><th style="width:5%">ZNT (m)</th>'
+      +'<th style="width:14%">Mentions de danger</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>'
+      +'</div>';
+  });
+  const today=dateFR(new Date().toISOString().slice(0,10));
+  const id=v=>esc(v||'—');
+  const css='@page{size:A4 landscape;margin:11mm 9mm 14mm 9mm}'
+    +'*{box-sizing:border-box}html,body{margin:0;padding:0}'
+    +'body{font-family:"Inter",system-ui,Arial,sans-serif;color:#20251F;font-size:9.5px;line-height:1.4}'
+    +'.mono{font-variant-numeric:tabular-nums}.ctr{text-align:center}.nw{white-space:nowrap}.muted,.s2{color:#6A7268}.s2{font-weight:400;font-size:8.5px}'
+    +'h1{font-family:"Fraunces",Georgia,serif;font-size:19px;color:#1F3A2E;margin:0;letter-spacing:-.01em}'
+    +'.mark{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#9C7322;font-weight:700}'
+    +'.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1F3A2E;padding-bottom:10px;margin-bottom:12px}'
+    +'.head .sub{color:#6A7268;font-size:10px;margin-top:2px}'
+    +'.expl{text-align:right;font-size:9.5px;line-height:1.5}.expl b{color:#1F3A2E}'
+    +'.legal{background:#F1F2EC;border:1px solid #D5D8CC;border-radius:5px;padding:7px 10px;margin-bottom:12px;font-size:8.6px;color:#3a4138}'
+    +'.legal b{color:#1F3A2E}'
+    +'.bloc{border:1px solid #D5D8CC;border-radius:6px;margin-bottom:9px;overflow:hidden;page-break-inside:avoid;break-inside:avoid}'
+    +'table{border-collapse:collapse;width:100%}'
+    +'.hb{background:#E8EEE8}.hb td{padding:6px 9px;vertical-align:top;border-right:1px solid #d4ddd4}.hb tr:first-child td{border-bottom:1px solid #d4ddd4}'
+    +'.hb td:last-child{border-right:none}.lbl{display:block;font-size:7.5px;text-transform:uppercase;letter-spacing:.05em;color:#5c6a5c;margin-bottom:1px}'
+    +'.hb b{font-size:11px;color:#1F3A2E}.fd{display:inline-block;margin-top:3px;background:#F6E6E8;color:#8A2D3B;font-weight:700;font-size:8px;padding:1px 6px;border-radius:3px}'
+    +'.parc{font-size:9px}.parc .lbl{margin-bottom:2px}'
+    +'.pr th{background:#1F3A2E;color:#F1F2EC;font-size:7.8px;font-weight:600;text-align:left;padding:4px 6px;text-transform:uppercase;letter-spacing:.02em}'
+    +'.pr td{padding:4px 6px;border-bottom:1px solid #E5E7DD;vertical-align:top}.pr tr:last-child td{border-bottom:none}'
+    +'.pr .prod b{color:#20251F}.pr .sa{color:#4a524a;font-size:8.8px}.pr .risk{font-size:8.4px;color:#8A2D3B}'
+    +'.cmr{background:#8A2D3B;color:#fff;font-size:7px;font-weight:700;padding:1px 4px;border-radius:3px;vertical-align:middle}'
+    +'.hl{background:#F3EAD4;color:#9C7322;font-size:7px;font-weight:700;padding:1px 4px;border-radius:3px}'
+    +'.foot{margin-top:16px;display:flex;justify-content:space-between;align-items:flex-end;font-size:8.5px;color:#6A7268}'
+    +'.sign{border:1px solid #D5D8CC;border-radius:5px;width:240px;height:64px;padding:5px 8px}.sign .lbl{margin-bottom:0}'
+    +'.note{margin-top:4px;font-size:8px;color:#8a917f;max-width:62%}';
+  const html='<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
+    +'<title>Registre phytosanitaire '+id(meta.campagne)+' — '+id(meta.client)+'</title>'
+    +'<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    +'<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">'
+    +'<style>'+css+'</style></head><body>'
+    +'<div class="head"><div><div class="mark">VITI·Sens</div><h1>Registre phytosanitaire</h1>'
+    +'<div class="sub">Registre des traitements — Campagne '+id(meta.campagne)+' · '+sorted.length+' passage'+(sorted.length>1?'s':'')+'</div></div>'
+    +'<div class="expl"><b>'+id(meta.client)+'</b>'+(meta.contact?'<br>'+esc(meta.contact):'')
+    +((meta.commune||meta.cp)?'<br>'+esc([meta.cp,meta.commune].filter(Boolean).join(' ')):'')
+    +(meta.tel?'<br>Tél. '+esc(meta.tel):'')+'<br><span class="s2">Édité le '+today+'</span></div></div>'
+    +'<div class="legal">Registre tenu en application du <b>Règlement (CE) n°1107/2009 (art. 67)</b> et de l\'<b>arrêté du 16 juin 2009</b> relatif au registre des traitements phytosanitaires. À conserver au minimum <b>5 ans</b> et à présenter en cas de contrôle. La date de récolte la plus précoce intègre le délai avant récolte (DAR) de chaque produit.</div>'
+    +blocs
+    +'<div class="foot"><div><div class="note">Document généré automatiquement par VITI Sens à partir des passages saisis. Les doses homologuées et DAR sont issus de la base ANSES e-phy ; en cas de divergence avec l\'étiquette du produit, l\'étiquette fait foi. MFSC, adjuvants et produits de biocontrôle figurent au registre pour la traçabilité.</div></div>'
+    +'<div class="sign"><span class="lbl">Date et signature de l\'exploitant</span></div></div>'
+    +'<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print();},350);};<\/scr'+'ipt>'
+    +'</body></html>';
+  const w=window.open('','_blank');
+  if(!w){toast('Autorisez les fenêtres pop-up pour générer le registre PDF.');return;}
+  w.document.open(); w.document.write(html); w.document.close();
+  toast('Registre prêt — choisissez « Enregistrer en PDF » dans l\'impression');
 }
 function dl(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href);}
 
