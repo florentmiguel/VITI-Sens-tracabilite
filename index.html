@@ -307,24 +307,38 @@ const SB_OK = !/^__/.test(SUPABASE_URL) && typeof supabase!=='undefined';
 const SB = SB_OK ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
 
 /* ===================== ÉTAT ===================== */
-let parcelles=[], ilots=[], passages=[], meta={client:'',campagne:String(new Date().getFullYear())};
+let parcelles=[], ilots=[], ilot_parcelles={}, passages=[], meta={client:'',campagne:String(new Date().getFullYear())};
 let session=null, isConsultant=false, readonly=false, viewingLabel='', viewingUid=null;
 
 /* ===================== PERSISTANCE CLOUD ===================== */
 async function loadDB(uid){
   uid=uid||session?.user?.id;
-  parcelles=[];ilots=[];passages=[];meta={client:'',campagne:String(new Date().getFullYear())};
+  parcelles=[];ilots=[];ilot_parcelles={};passages=[];meta={client:'',campagne:String(new Date().getFullYear())};
   if(!SB||!uid)return;
   const {data,error}=await SB.from('traca_data').select('payload').eq('user_id',uid).maybeSingle();
   if(error){toast('Erreur de chargement : '+error.message);return;}
   const d=data&&data.payload;
-  if(d){parcelles=d.parcelles||[];ilots=d.ilots||[];passages=d.passages||[];meta=d.meta||meta;}
+  if(d){
+    parcelles=d.parcelles||[]; ilots=d.ilots||[]; passages=d.passages||[]; meta=d.meta||meta;
+    ilot_parcelles=d.ilot_parcelles||{};
+    // migration depuis l'ancien modèle p.ilot (1:1) → many-to-many
+    if(!Object.keys(ilot_parcelles).length && parcelles.some(p=>p.ilot)){
+      ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.ilot===il.nom).map(p=>p.key);});
+      // conversion m² → ares si valeurs > 500 (heuristique)
+      parcelles.forEach(p=>{
+        if((p.cad||0)>500) p.cad=Math.round(p.cad/100*10)/10;  /* 1250 m² → 12.5 a */
+        if((p.pl||0)>500)  p.pl =Math.round(p.pl /100*10)/10;
+        delete p.ilot;
+      });
+      saveDB();
+    }
+  }
 }
 let _saveTimer=null;
 function saveDB(){ syncHeader(); if(readonly||!SB||!session)return; clearTimeout(_saveTimer); _saveTimer=setTimeout(persist,700); }
 async function persist(){
-  const uid = viewingUid || session.user.id;
-  const payload={parcelles,ilots,passages,meta};
+  const uid=viewingUid||session.user.id;
+  const payload={parcelles,ilots,ilot_parcelles,passages,meta};
   const {error}=await SB.from('traca_data').upsert({user_id:uid,payload,updated_at:new Date().toISOString()});
   if(error)toast('Erreur de sauvegarde : '+error.message);
 }
@@ -332,10 +346,15 @@ function syncHeader(){
   const c=document.getElementById('ctxClient'); if(c)c.textContent=meta.client||'—';
   const cc=document.getElementById('ctxCamp'); if(cc&&cc.value!==meta.campagne)cc.value=meta.campagne||'';
 }
-function seedDB(){ parcelles=[];ilots=[];passages=[];meta={client:'',campagne:String(new Date().getFullYear())}; saveDB(); }
+function seedDB(){ parcelles=[];ilots=[];ilot_parcelles={};passages=[];meta={client:'',campagne:String(new Date().getFullYear())}; saveDB(); }
 function chargerExemple(){
-  parcelles=EXAMPLE_PARC.map((p,i)=>({key:'p'+i,id:p.id,com:p.com,ld:p.ld,cep:p.cep,cad:+p.cad||0,pl:+p.pl||0,ilot:p.com}));
-  ilots=[...new Set(parcelles.map(p=>p.com))].map(c=>({nom:c,type:'Fixe'}));
+  // surfaces EXAMPLE_PARC en m² → ares (÷100)
+  parcelles=EXAMPLE_PARC.map((p,i)=>({key:'p'+i,id:p.id,com:p.com,ld:p.ld,cep:p.cep,
+    cad:Math.round((+p.cad||0)/100*10)/10, pl:Math.round((+p.pl||0)/100*10)/10}));
+  const coms=[...new Set(parcelles.map(p=>p.com))];
+  ilots=coms.map(c=>({nom:c,type:'Fixe'}));
+  ilot_parcelles={};
+  ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.com===il.nom).map(p=>p.key);});
   passages=[]; meta={client:'EARL HOTTE BIFFROTEAUX',campagne:'2026'}; saveDB();
 }
 
@@ -410,15 +429,20 @@ function saveWelcome(){
 async function logout(){ if(SB)await SB.auth.signOut(); location.reload(); }
 
 /* ===================== CALCULS ===================== */
+/* surfaces stockées en ares (1 are = 100 m²) */
+function parcDansIlot(nom){
+  const keys=ilot_parcelles[nom]||[];
+  return parcelles.filter(p=>keys.includes(p.key));
+}
 function ratioIlot(nom){
-  const ps=parcelles.filter(p=>p.ilot===nom);
+  const ps=parcDansIlot(nom);
   const cad=ps.reduce((s,p)=>s+(+p.cad||0),0);
-  const pl=ps.reduce((s,p)=>s+(+p.pl||0),0);
+  const pl =ps.reduce((s,p)=>s+(+p.pl ||0),0);
   return cad>0?pl/cad:1;
 }
 function ilotSurfaces(nom){
-  const ps=parcelles.filter(p=>p.ilot===nom);
-  return {cad:ps.reduce((s,p)=>s+(+p.cad||0),0),pl:ps.reduce((s,p)=>s+(+p.pl||0),0),nb:ps.length};
+  const ps=parcDansIlot(nom);
+  return {cad:ps.reduce((s,p)=>s+(+p.cad||0),0), pl:ps.reduce((s,p)=>s+(+p.pl||0),0), nb:ps.length};
 }
 function calcIFT(doseAppli,doseHom,ratio){
   const da=parseFloat(String(doseAppli).replace(',','.')), dh=parseFloat(String(doseHom).replace(',','.'));
@@ -473,7 +497,7 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 /* ===================== DASHBOARD ===================== */
 function renderDash(){
-  const totalPl=parcelles.reduce((s,p)=>s+(+p.pl||0),0)/10000;
+  const totalPl=parcelles.reduce((s,p)=>s+(+p.pl||0),0)/100; /* ares→ha */
   const ex=iftExploit(); const exTot=ex.h+ex.hh;
   const nbPass=passages.length;
   let recent=[...passages].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,6);
@@ -505,9 +529,10 @@ function emptyState(t,s){return`<div class="empty"><svg viewBox="0 0 24 24" fill
 /* ===================== VUE CONSULTANT ===================== */
 let clientsCache=[];
 function iftFromPayload(d){
-  const parc=d.parcelles||[], pass=d.passages||[];
+  const parc=d.parcelles||[], pass=d.passages||[], ip=d.ilot_parcelles||{};
+  function plIlot(nom){const keys=ip[nom]||[];return parc.filter(p=>keys.includes(p.key)).reduce((s,p)=>s+(+p.pl||0),0);}
   const St=parc.reduce((s,p)=>s+(+p.pl||0),0)||1; let a={h:0,hh:0,bio:0};
-  pass.forEach(pa=>{const sPl=pa.sPl||parc.filter(p=>p.ilot===pa.ilot).reduce((s,p)=>s+(+p.pl||0),0);const w=(sPl||0)/St;
+  pass.forEach(pa=>{const sPl=pa.sPl||plIlot(pa.ilot);const w=(sPl||0)/St;
     (pa.produits||[]).forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});});
   return a;
 }
@@ -522,7 +547,7 @@ async function renderClients(){
   clientsCache=data||[];
   if(!clientsCache.length){el.querySelector('.card').innerHTML=emptyState('Aucune donnée client','Vos clients apparaîtront ici dès leur première saisie.');return;}
   const rows=clientsCache.map(c=>{const d=c.payload||{};const ex=iftFromPayload(d);const np=(d.passages||[]).length;
-    const pl=(d.parcelles||[]).reduce((s,p)=>s+(+p.pl||0),0)/10000;
+    const pl=(d.parcelles||[]).reduce((s,p)=>s+(+p.pl||0),0)/100;
     const contact=[d.meta?.contact,d.meta?.commune,d.meta?.cp].filter(Boolean).join(' · ');
     return `<tr style="cursor:pointer" onclick="ouvrirClient('${c.user_id}')">
       <td><b>${esc(d.meta?.client||'(sans nom)')}</b>${contact?`<br><span style="font-size:11px;color:var(--mute)">${esc(contact)}</span>`:''}</td>
@@ -651,8 +676,8 @@ function majInstrument(){
     ${surd?`<div style="margin-top:12px;background:rgba(138,45,59,.35);border:1px solid var(--lie-soft);border-radius:7px;padding:8px 11px;font-size:12.5px;font-weight:600">⚠ Surdosage : dose appliquée (${esc(dose)}) supérieure à la dose homologuée (${esc(u.d)} ${esc(u.un||'')})</div>`:''}
     <div class="ift-factor">
       <div>Îlot<b>${esc(ilot||'—')}</b></div>
-      <div>S. plantée<b class="mono">${fmtS(s.pl)} m²</b></div>
-      <div>S. cadastrale<b class="mono">${fmtS(s.cad)} m²</b></div>
+      <div>S. plantée<b class="mono">${fmtS(s.pl)} a</b></div>
+      <div>S. cadastrale<b class="mono">${fmtS(s.cad)} a</b></div>
       <div>Parcelles<b class="mono">${s.nb}</b></div>
     </div>`;
 }
@@ -710,11 +735,14 @@ function enregistrerPassage(){
 }
 
 /* ===================== BILAN ===================== */
-function sTotExploit(){return parcelles.reduce((s,p)=>s+(+p.pl||0),0);}
+function sTotExploit(){return parcelles.reduce((s,p)=>s+(+p.pl||0),0);} /* en ares */
 function iftExploit(){
   const St=sTotExploit()||1; let a={h:0,hh:0,bio:0};
-  passages.forEach(pa=>{const w=(pa.sPl||ilotSurfaces(pa.ilot).pl||0)/St;
-    pa.produits.forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});});
+  passages.forEach(pa=>{
+    const sPl=pa.sPl||ilotSurfaces(pa.ilot).pl||0;
+    const w=sPl/St;
+    pa.produits.forEach(pr=>{if(pr.ift==null)return;const c=catIFT(pr);if(a[c]!=null)a[c]+=pr.ift*w;});
+  });
   return a;
 }
 function iftParIlot(){const m={};
@@ -728,7 +756,7 @@ function renderBilan(){
   const parIlot=iftParIlot();
   document.getElementById('pg-bilan').innerHTML=`
    <div class="ph"><div><div class="eyebrow">Campagne ${esc(meta.campagne)} · ${esc(meta.client||'exploitation')}</div><h2>Bilan & traçabilité IFT</h2>
-     <div class="sub">${passages.length} passages · surface exploitation ${fmt(St/10000,2)} ha</div></div>
+     <div class="sub">${passages.length} passages · surface exploitation ${fmt(St/100,2)} ha</div></div>
      <div class="row" style="flex:none"><button class="btn btn-o" onclick="exportJSON()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Sauvegarde JSON</button>
        <button class="btn btn-o" onclick="importJSON()">Importer</button>
        <button class="btn btn-l" onclick="exportCSV()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button></div></div>
@@ -775,38 +803,40 @@ function voirPassage(id){go('bilan');}
 
 /* ===================== PARCELLES ===================== */
 function renderParcelles(){
-  const totCad=parcelles.reduce((s,p)=>s+(+p.cad||0),0),totPl=parcelles.reduce((s,p)=>s+(+p.pl||0),0);
-  const ilotOpts=n=>ilots.map(i=>`<option ${i.nom===n?'selected':''}>${esc(i.nom)}</option>`).join('');
+  const totCad=parcelles.reduce((s,p)=>s+(+p.cad||0),0);
+  const totPl =parcelles.reduce((s,p)=>s+(+p.pl ||0),0);
   document.getElementById('pg-parcelles').innerHTML=`
    <div class="ph"><div><div class="eyebrow">Référentiel</div><h2>Parcellaire</h2>
-     <div class="sub">${parcelles.length} parcelles · ${fmtS(totPl)} m² plantés / ${fmtS(totCad)} m² cadastraux</div></div>
+     <div class="sub">${parcelles.length} parcelles · ${fmtS(totPl)} a plantés / ${fmtS(totCad)} a cadastraux (${fmt(totPl/100,2)} ha)</div></div>
      <button class="btn btn-g" onclick="editParcelle()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une parcelle</button></div>
-   <div class="card"><div class="tbl-wrap"><table><thead><tr><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale</th><th>S. plantée</th><th>Îlot</th><th></th></tr></thead><tbody>
-   ${parcelles.map(p=>`<tr>
+   <div class="card"><div class="tbl-wrap"><table><thead><tr><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale (a)</th><th>S. plantée (a)</th><th></th></tr></thead><tbody>
+   ${parcelles.map(p=>{
+     const inIlots=Object.entries(ilot_parcelles).filter(([n,ks])=>ks.includes(p.key)).map(([n])=>n);
+     return`<tr>
      <td><b>${esc(p.id)}</b></td><td>${esc(p.com)}</td><td>${esc(p.ld||'')}</td><td>${esc(p.cep||'')}</td>
-     <td class="mono">${fmtS(p.cad)} m²</td><td class="mono">${fmtS(p.pl)} m²</td>
-     <td><select onchange="setParcIlot('${p.key}',this.value)" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px">${ilotOpts(p.ilot)}</select></td>
-     <td><button class="iconbtn" onclick="editParcelle('${p.key}')" title="Modifier"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></td></tr>`).join('')}
+     <td class="mono">${fmtS(p.cad)}</td><td class="mono">${fmtS(p.pl)}</td>
+     <td><div style="font-size:11.5px;color:var(--mute)">${inIlots.length?inIlots.map(n=>`<span class="tag-pill" style="font-size:10px">${esc(n)}</span>`).join(' '):'<span style="color:var(--lie)">Aucun îlot</span>'}</div>
+       <button class="iconbtn" onclick="editParcelle('${p.key}')" title="Modifier"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></td></tr>`;}).join('')}
    </tbody></table></div></div>`;
 }
-function setParcIlot(key,val){const p=parcelles.find(x=>x.key===key);if(p){p.ilot=val;saveDB();}}
 function editParcelle(key){
-  const p=key?parcelles.find(x=>x.key===key):{id:'',com:'',ld:'',cep:'',cad:0,pl:0,ilot:ilots[0]?.nom||''};
+  const p=key?parcelles.find(x=>x.key===key):{id:'',com:'',ld:'',cep:'',cad:0,pl:0};
   openModal(key?'Modifier la parcelle':'Nouvelle parcelle',`
    <div class="row"><div class="field"><label>N° parcelle</label><input id="ep_id" value="${esc(p.id)}"></div>
      <div class="field"><label>Commune</label><input id="ep_com" value="${esc(p.com)}"></div></div>
    <div class="row"><div class="field"><label>Lieu-dit</label><input id="ep_ld" value="${esc(p.ld||'')}"></div>
      <div class="field"><label>Cépage</label><input id="ep_cep" value="${esc(p.cep||'')}"></div></div>
-   <div class="row"><div class="field"><label>Surface cadastrale (m²)</label><input id="ep_cad" type="number" value="${p.cad||0}"></div>
-     <div class="field"><label>Surface plantée (m²)</label><input id="ep_pl" type="number" value="${p.pl||0}"></div></div>
-   <div class="field"><label>Îlot</label><select id="ep_ilot">${ilots.map(i=>`<option ${i.nom===p.ilot?'selected':''}>${esc(i.nom)}</option>`).join('')}</select></div>
+   <div class="row"><div class="field"><label>Surface cadastrale (ares)</label><input id="ep_cad" type="number" step="0.01" value="${p.cad||0}"></div>
+     <div class="field"><label>Surface plantée (ares)</label><input id="ep_pl" type="number" step="0.01" value="${p.pl||0}"></div></div>
+   <div style="font-size:11.5px;color:var(--mute);margin-bottom:12px">1 are = 100 m². Ex. : 12,50 a = 0,125 ha = 1 250 m².<br>L'affectation aux îlots se fait dans l'onglet Îlots.</div>
    <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveParcelle('${key||''}')">Enregistrer</button>`);
 }
 function saveParcelle(key){
   const g=id=>document.getElementById(id).value;
-  const o={id:g('ep_id'),com:g('ep_com'),ld:g('ep_ld'),cep:g('ep_cep'),cad:+g('ep_cad'),pl:+g('ep_pl'),ilot:g('ep_ilot')};
+  const o={id:g('ep_id'),com:g('ep_com'),ld:g('ep_ld'),cep:g('ep_cep'),cad:+g('ep_cad'),pl:+g('ep_pl')};
   if(!o.id){toast('Indiquez un n° de parcelle.');return;}
-  if(key){Object.assign(parcelles.find(x=>x.key===key),o);}else{o.key='p'+Date.now();parcelles.push(o);}
+  if(key){Object.assign(parcelles.find(x=>x.key===key),o);}
+  else{o.key='p'+Date.now();parcelles.push(o);}
   saveDB();closeModal();renderParcelles();toast('Parcelle enregistrée');
 }
 
@@ -814,44 +844,74 @@ function saveParcelle(key){
 function renderIlots(){
   document.getElementById('pg-ilots').innerHTML=`
    <div class="ph"><div><div class="eyebrow">Référentiel</div><h2>Îlots</h2>
-     <div class="sub">Regroupez des parcelles. Le ratio S.plantée/S.cadastrale alimente l'IFT.</div></div>
+     <div class="sub">Sélectionnez les parcelles de chaque îlot. Une parcelle peut appartenir à plusieurs îlots.</div></div>
      <button class="btn btn-g" onclick="editIlot()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Nouvel îlot</button></div>
    <div class="grid g2">
-   ${ilots.map((il,idx)=>{const s=ilotSurfaces(il.nom),r=ratioIlot(il.nom);return`
-     <div class="card pad">
-       <div style="display:flex;justify-content:space-between;align-items:flex-start">
+   ${ilots.map((il,idx)=>{
+     const s=ilotSurfaces(il.nom),r=ratioIlot(il.nom);
+     const keys=ilot_parcelles[il.nom]||[];
+     const parcList=parcelles.map(p=>{
+       const checked=keys.includes(p.key);
+       return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;background:${checked?'var(--vigne-soft)':'transparent'};font-size:12.5px">
+         <input type="checkbox" ${checked?'checked':''} onchange="toggleParcIlot(\'${il.nom}\',\'${p.key}\',this.checked)" style="accent-color:var(--vigne)">
+         <span><b>${esc(p.id)}</b> — ${esc(p.com)}${p.ld?' · '+esc(p.ld):''} ${p.cep?'('+esc(p.cep)+')':''}</span>
+         <span style="margin-left:auto;color:var(--mute);white-space:nowrap">${fmtS(p.pl)} a</span></label>`;
+     }).join('');
+     return`<div class="card pad">
+       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
          <div><div style="font-family:var(--display);font-size:18px;font-weight:600;color:var(--vigne)">${esc(il.nom)}</div>
            <span class="tag-pill ${il.type==='Ponctuel'?'laiton':''}">${esc(il.type)}</span></div>
          <div style="text-align:right"><div style="font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em">Ratio</div>
-           <div class="mono" style="font-family:var(--display);font-size:24px;font-weight:600;color:var(--laiton)">${fmt(r,3)}</div></div>
+           <div class="mono" style="font-family:var(--display);font-size:22px;font-weight:600;color:var(--laiton)">${fmt(r,3)}</div></div>
        </div>
-       <div style="display:flex;gap:16px;margin-top:12px;font-size:12.5px;color:var(--mute)">
-         <span>${s.nb} parcelle${s.nb>1?'s':''}</span><span>plantée <b class="mono" style="color:var(--ink)">${fmtS(s.pl)}</b> m²</span>
-         <span>cadastrale <b class="mono" style="color:var(--ink)">${fmtS(s.cad)}</b> m²</span></div>
-       <div style="margin-top:10px;font-size:12px;color:var(--mute)">${parcelles.filter(p=>p.ilot===il.nom).map(p=>esc(p.id)).join(' · ')||'—'}</div>
-       <div style="margin-top:12px;display:flex;gap:6px"><button class="btn btn-o btn-sm" onclick="editIlot(${idx})">Renommer / type</button>
+       <div style="display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:10px;flex-wrap:wrap">
+         <span>${s.nb} parcelle${s.nb>1?'s':''}</span>
+         <span>plantée <b class="mono" style="color:var(--ink)">${fmtS(s.pl)}</b> a (${fmt(s.pl/100,2)} ha)</span>
+         <span>cadastrale <b class="mono" style="color:var(--ink)">${fmtS(s.cad)}</b> a</span></div>
+       <div style="border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;max-height:220px;overflow-y:auto">
+         ${parcelles.length?parcList:'<div style=\"padding:12px;color:var(--mute);font-size:12px\">Aucune parcelle — créez-en dans l\'onglet Parcellaire.</div>'}
+       </div>
+       <div style="margin-top:10px;display:flex;gap:6px">
+         <button class="btn btn-o btn-sm" onclick="editIlot(${idx})">Renommer / type</button>
          <button class="btn btn-danger btn-sm" onclick="supprIlot(${idx})">Supprimer</button></div>
-     </div>`}).join('')}
+     </div>`;
+   }).join('')}
    </div>`;
+}
+function toggleParcIlot(nomIlot,key,checked){
+  if(!ilot_parcelles[nomIlot])ilot_parcelles[nomIlot]=[];
+  if(checked){if(!ilot_parcelles[nomIlot].includes(key))ilot_parcelles[nomIlot].push(key);}
+  else{ilot_parcelles[nomIlot]=ilot_parcelles[nomIlot].filter(k=>k!==key);}
+  saveDB(); renderIlots();
 }
 function editIlot(idx){
   const il=idx!=null?ilots[idx]:{nom:'',type:'Fixe'};
-  openModal(idx!=null?'Modifier l\'îlot':'Nouvel îlot',`
+  openModal(idx!=null?"Modifier l\'îlot":"Nouvel îlot",`
    <div class="field"><label>Nom de l'îlot</label><input id="ei_nom" value="${esc(il.nom)}" placeholder="ex. Voie des Bois — Chardonnay"></div>
-   <div class="field"><label>Type</label><select id="ei_type"><option ${il.type==='Fixe'?'selected':''}>Fixe</option><option ${il.type==='Ponctuel'?'selected':''}>Ponctuel</option></select>
-     <div style="font-size:11.5px;color:var(--mute);margin-top:5px">Fixe = îlot permanent · Ponctuel = regroupement créé pour un passage précis.</div></div>
-   <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveIlot(${idx==null?'null':idx})">Enregistrer</button>
-   <div style="font-size:12px;color:var(--mute);margin-top:12px">Affectez ensuite les parcelles à cet îlot depuis l'onglet Parcellaire.</div>`);
+   <div class="field"><label>Type</label><select id="ei_type">
+     <option ${il.type==='Fixe'?'selected':''}>Fixe</option>
+     <option ${il.type==='Ponctuel'?'selected':''}>Ponctuel</option></select>
+     <div style="font-size:11.5px;color:var(--mute);margin-top:5px">Fixe = permanent · Ponctuel = regroupement pour un passage précis.</div></div>
+   <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveIlot(${idx==null?'null':idx})">Enregistrer</button>`);
 }
 function saveIlot(idx){
   const nom=document.getElementById('ei_nom').value.trim(),type=document.getElementById('ei_type').value;
   if(!nom){toast('Indiquez un nom.');return;}
-  if(idx===null||idx==null){if(ilots.some(i=>i.nom===nom)){toast('Cet îlot existe déjà.');return;}ilots.push({nom,type});}
-  else{const old=ilots[idx].nom;ilots[idx]={nom,type};if(old!==nom)parcelles.forEach(p=>{if(p.ilot===old)p.ilot=nom;});}
+  if(idx===null||idx==null){
+    if(ilots.some(i=>i.nom===nom)){toast('Cet îlot existe déjà.');return;}
+    ilots.push({nom,type}); ilot_parcelles[nom]=[];
+  }else{
+    const old=ilots[idx].nom; ilots[idx]={nom,type};
+    if(old!==nom){ilot_parcelles[nom]=ilot_parcelles[old]||[];delete ilot_parcelles[old];}
+  }
   saveDB();closeModal();renderIlots();toast('Îlot enregistré');
 }
-function supprIlot(idx){const il=ilots[idx];if(parcelles.some(p=>p.ilot===il.nom)){toast('Réaffectez d\'abord ses parcelles.');return;}
-  if(confirm('Supprimer l\'îlot '+il.nom+' ?')){ilots.splice(idx,1);saveDB();renderIlots();}}
+function supprIlot(idx){
+  const il=ilots[idx];
+  if(confirm('Supprimer l\'îlot '+il.nom+' ?')){
+    ilots.splice(idx,1);delete ilot_parcelles[il.nom];saveDB();renderIlots();
+  }
+}
 
 /* ===================== PRODUITS e-phy ===================== */
 function renderProduits(){
@@ -879,13 +939,13 @@ function filterProduits(q){
 
 /* ===================== EXPORT / IMPORT ===================== */
 function exportJSON(){
-  const blob=new Blob([JSON.stringify({parcelles,ilots,passages,meta},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({parcelles,ilots,ilot_parcelles,passages,meta},null,2)],{type:'application/json'});
   dl(blob,`VITI_Sens_traca_${meta.campagne}.json`);toast('Sauvegarde téléchargée');
 }
 function importJSON(){
   const inp=document.createElement('input');inp.type='file';inp.accept='.json';
   inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-    rd.onload=()=>{try{const d=JSON.parse(rd.result);parcelles=d.parcelles||parcelles;ilots=d.ilots||ilots;passages=d.passages||passages;meta=d.meta||meta;saveDB();toast('Données importées');go('dash');}catch(err){toast('Fichier illisible');}};rd.readAsText(f);};
+    rd.onload=()=>{try{const d=JSON.parse(rd.result);parcelles=d.parcelles||parcelles;ilots=d.ilots||ilots;ilot_parcelles=d.ilot_parcelles||ilot_parcelles;passages=d.passages||passages;meta=d.meta||meta;saveDB();toast('Données importées');go('dash');}catch(err){toast('Fichier illisible');}};rd.readAsText(f);};
   inp.click();
 }
 function exportCSV(){
