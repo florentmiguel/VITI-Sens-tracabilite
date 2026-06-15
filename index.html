@@ -198,8 +198,9 @@ tbody tr:hover{background:var(--craie)}
     <div class="brand">VITI<b>·</b>Sens</div>
     <div class="tag">Traçabilité</div>
     <div class="sp"></div>
-    <div class="ctx">
-      <span>Client <b id="ctxClient">—</b></span>
+    <div class="ctx" id="ctxBar">
+      <span id="ctxConsultantLabel" style="display:none;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--laiton-soft);font-weight:600">Mode consultant</span>
+      <span id="ctxClientSpan">Client <b id="ctxClient">—</b></span>
       <span>Campagne</span><input id="ctxCamp" maxlength="9" oninput="meta.campagne=this.value;saveDB()">
     </div>
     <button id="roReturn" class="iconbtn" style="display:none;background:var(--laiton);color:#fff;font-size:12px;font-weight:600;padding:6px 12px;gap:6px" onclick="returnToOwn()">⟲ Dossier <span id="roLabel"></span> — revenir à mes clients</button>
@@ -381,6 +382,13 @@ async function doLogin(){
 async function afterLogin(){
   isConsultant = !!CONSULTANT_UID && !/^__/.test(CONSULTANT_UID) && session.user.id===CONSULTANT_UID;
   document.querySelectorAll('.consultant-only').forEach(e=>e.style.display=isConsultant?'':'none');
+  // topbar : "Mode consultant" ou "Client …"
+  const lbl=document.getElementById('ctxConsultantLabel');
+  const csp=document.getElementById('ctxClientSpan');
+  const cmp=document.getElementById('ctxCamp');
+  if(lbl) lbl.style.display=isConsultant?'':'none';
+  if(csp) csp.style.display=isConsultant?'none':'';
+  if(cmp) cmp.style.display=isConsultant?'none':'';
   readonly=false; viewingLabel='';
   await loadDB();
   document.getElementById('login').style.display='none';
@@ -577,8 +585,13 @@ async function renderClients(){
 function ouvrirClient(uid){
   const c=clientsCache.find(x=>x.user_id===uid); if(!c)return;
   const d=JSON.parse(JSON.stringify(c.payload||{}));
-  parcelles=d.parcelles||[];ilots=d.ilots||[];passages=d.passages||[];meta=d.meta||{client:'',campagne:''};
+  parcelles=d.parcelles||[];ilots=d.ilots||[];ilot_parcelles=d.ilot_parcelles||{};passages=d.passages||[];meta=d.meta||{client:'',campagne:''};
   readonly=false; viewingLabel=meta.client||'client'; viewingUid=uid;
+  // topbar : rester en "Mode consultant" (le bandeau doré indique le client)
+  const lbl=document.getElementById('ctxConsultantLabel');
+  const csp=document.getElementById('ctxClientSpan');
+  const cmp=document.getElementById('ctxCamp');
+  if(lbl)lbl.style.display=''; if(csp)csp.style.display='none'; if(cmp)cmp.style.display='none';
   const b=document.getElementById('roReturn'); if(b)b.style.display='';
   const rl=document.getElementById('roLabel'); if(rl)rl.textContent=viewingLabel;
   syncHeader(); go('dash'); toast('Dossier ouvert : '+viewingLabel);
@@ -586,6 +599,11 @@ function ouvrirClient(uid){
 async function returnToOwn(){
   readonly=false; viewingLabel=''; viewingUid=null;
   const b=document.getElementById('roReturn'); if(b)b.style.display='none';
+  // topbar : revenir en mode consultant
+  const lbl=document.getElementById('ctxConsultantLabel');
+  const csp=document.getElementById('ctxClientSpan');
+  const cmp=document.getElementById('ctxCamp');
+  if(lbl)lbl.style.display=''; if(csp)csp.style.display='none'; if(cmp)cmp.style.display='none';
   await loadDB(session.user.id); syncHeader(); go('clients');
 }
 
@@ -1047,7 +1065,7 @@ function renderProduits(){
    <div class="card">
      <div class="card-h"><h3>Base ANSES e-phy — ${EPHY.length} spécialités</h3>
        <input id="prodSearch" placeholder="Rechercher nom, substance, fonction…" style="width:260px;padding:7px 11px;border:1px solid var(--line);border-radius:var(--rs);font-size:13px" oninput="filterProduits(this.value)"></div>
-     <div class="tbl-wrap"><table><thead><tr><th>Spécialité</th><th>Type IFT</th><th>AMM</th><th>Matière active</th><th>Usages / doses</th><th>Phrase de risque</th><th>CMR</th></tr></thead>
+     <div class="tbl-wrap"><table><thead><tr><th>Spécialité</th><th>Type IFT</th><th>AMM</th><th>Matière active</th><th>Usages / doses</th><th>Phrase de risque</th><th>CMR</th>${isConsultant?'<th title="Dupliquer avec un autre nom commercial">↗</th>':''}</tr></thead>
      <tbody id="prodBody"></tbody></table></div></div>`;
   filterProduits('');
 }
@@ -1084,7 +1102,7 @@ function renderFormProduit(p){
       <div class="row">
         <div class="field"><label>Dose homologuée</label><input id="hl_dosehom" value="${esc(p?.doseHom&&p.doseHom!=='—'?p.doseHom:'')}" type="text" inputmode="decimal" placeholder="0"></div>
         <div class="field"><label>Unité</label>
-          <select id="hl_unite">${['kg/ha','L/ha','g/ha','mL/ha','mL/hL','g/hL','L/hL'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
+          <select id="hl_unite_ppp">${['kg/ha','L/ha','g/ha','mL/ha','mL/hL','g/hL','L/hL'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
         <div class="field"><label>DAR (jours)</label><input id="hl_dar" value="${esc(p?.dar||'')}" type="number" min="0" placeholder="—"></div>
         <div class="field"><label>ZNT (m)</label>
           <select id="hl_znt">${['','5','20','50','100'].map(z=>`<option ${p?.znt==z?'selected':''}>${z||'—'}</option>`).join('')}</select></div>
@@ -1099,7 +1117,7 @@ function renderFormProduit(p){
         <div class="field"><label>Dose conseillée</label>
           <input id="hl_doseconseillee" value="${esc(p?.doseConseillee||'')}" type="text" inputmode="decimal" placeholder="ex. 2"></div>
         <div class="field"><label>Unité</label>
-          <select id="hl_unite">${['L/ha','kg/ha','mL/hL','g/hL','L/hL','mL/ha','g/ha'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
+          <select id="hl_unite_mfsc">${['L/ha','kg/ha','mL/hL','g/hL','L/hL','mL/ha','g/ha'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
       </div>
       <div style="font-size:11.5px;color:var(--mute);margin-bottom:10px">La dose conseillée est affichée dans le bilan mais ne génère pas d'IFT.</div>
     </div>
@@ -1129,12 +1147,15 @@ function saveProduitPerso(idx){
   const nom=g('hl_nom'); if(!nom){toast('Le nom est obligatoire.');return;}
   const fonc=g('hl_fonc');
   const isHorsIFT=['MFSC','Correcteur de carence'].includes(fonc);
+  const unite=isHorsIFT
+    ?(document.getElementById('hl_unite_mfsc')?.value||'L/ha')
+    :(document.getElementById('hl_unite_ppp')?.value||'kg/ha');
   const prod={
     n:nom, sa:g('hl_sa'), f:fonc, amm:g('hl_amm'),
     h:isHorsIFT?'':g('hl_h'),
     cmr:(!isHorsIFT&&document.getElementById('hl_cmr')?.checked)?'OUI':'NON',
     fam:{}, type:g('hl_type'),
-    unite:g('hl_unite')||'L/ha',
+    unite,
     doseHom:isHorsIFT?'—':(g('hl_dosehom')||'—'),
     doseConseillee:isHorsIFT?g('hl_doseconseillee'):'',
     dar:isHorsIFT?'':g('hl_dar'),
@@ -1163,8 +1184,25 @@ function filterProduits(q){
     <td style="font-size:12px;color:var(--mute)">${esc(p.sa||'')}</td>
     <td style="font-size:12px">${(p.u||[]).slice(0,3).map(u=>`${esc(u.c||'')}: ${esc(u.d)} ${esc(u.un||'')}`).join('<br>')}${(p.u||[]).length>3?`<br><span style="color:var(--mute)">+${p.u.length-3} autres</span>`:''}</td>
     <td style="font-size:11.5px">${esc(p.h||'—')}</td>
-    <td>${(p.cmr||'').toUpperCase()==='OUI'?'<span class="tag-pill lie">CMR</span>':'<span class="tag-pill mute">non</span>'}</td></tr>`).join('')
-    ||'<tr><td colspan="7" style="text-align:center;color:var(--mute);padding:30px">Aucun résultat</td></tr>';
+    <td>${(p.cmr||'').toUpperCase()==='OUI'?'<span class="tag-pill lie">CMR</span>':'<span class="tag-pill mute">non</span>'}</td>
+    ${isConsultant?`<td><button class="btn btn-o btn-sm" onclick="dupliquerEphy('${esc(p.n).replace(/'/g,"\\'")}')">↗</button></td>`:''}
+    </tr>`).join('')
+    ||'<tr><td colspan="8" style="text-align:center;color:var(--mute);padding:30px">Aucun résultat</td></tr>';
+}
+
+function dupliquerEphy(nom){
+  const src=EPHY_BY_NAME[nom]; if(!src)return;
+  // pré-remplir le formulaire avec les données e-phy, nom vide à saisir
+  const u=src.u[0]||{};
+  const p={n:'',sa:src.sa,f:src.f,amm:src.amm,h:src.h,cmr:src.cmr,type:src.type,
+    unite:u.un||'',doseHom:u.d||'',dar:u.dar||'',znt:u.znt||''};
+  openModal(`Dupliquer "${esc(nom)}" avec un autre nom commercial`,`
+    <div style="background:var(--vigne-soft);border-radius:var(--rs);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:var(--vigne)">
+      Données reprises depuis e-phy. Saisissez le nouveau nom commercial et ajustez si besoin.</div>
+    <div id="formProduit"></div>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="saveProduitPerso(null)">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Ajouter au référentiel</button>`);
+  renderFormProduit(p);
 }
 
 /* ===================== EXPORT / IMPORT ===================== */
