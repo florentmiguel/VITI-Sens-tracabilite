@@ -681,9 +681,13 @@ function acSearch(q){
   const perso=(meta.produits_perso||[]).filter(p=>p.n.toLowerCase().includes(q));
   const ephy=EPHY.filter(p=>p.n.toLowerCase().includes(q)).slice(0,28);
   const items=[
-    ...perso.map(p=>`<div class="ac-item" onclick="pickProdPerso('${esc(p.n).replace(/'/g,"\\'")}')">
-      <div>${esc(p.n)} <span style="font-size:11px;color:var(--laiton);font-weight:600">${p.categorie==='mfsc'?'MFSC':'PPP perso'}</span></div>
-      <div class="sa">${esc(p.sa||'')}</div></div>`),
+    ...perso.map(p=>{
+      const lbl=['MFSC','Correcteur de carence'].includes(p.f)?p.f:'PPP perso';
+      const clr=['MFSC','Correcteur de carence'].includes(p.f)?'var(--laiton)':'var(--lie)';
+      return`<div class="ac-item" onclick="pickProdPerso('${esc(p.n).replace(/'/g,"\\'")}')">
+        <div>${esc(p.n)} <span style="font-size:11px;color:${clr};font-weight:600">${lbl}</span></div>
+        <div class="sa">${esc(p.sa||'')}</div></div>`;
+    }),
     ...ephy.map(p=>`<div class="ac-item" onclick="pickProd('${esc(p.n).replace(/'/g,"\\'")}')">
       <div>${esc(p.n)}</div><div class="sa">${esc(p.sa||'')}</div></div>`)
   ];
@@ -787,7 +791,7 @@ function renderPanier(){
     <div><div class="nm">${esc(p.n)}
       <span class="tag-pill ${TYPES[p.type].cat==='none'?'mute':TYPES[p.type].cat==='bio'?'laiton':''}" style="font-size:10px">${esc(TYPES[p.type].lbl.split(' ')[0])}</span>
       ${sd?' <span class="tag-pill lie" style="font-size:10px">surdosage</span>':''}</div>
-      <div class="meta">${esc(p.doseAppli)}${p.doseHom&&p.doseHom!=='—'?'/'+esc(p.doseHom):''} ${esc(p.unite||'')} · ${esc(p.cible||p.sa||'')}</div></div>
+      <div class="meta">${esc(p.doseAppli)}${p.doseHom&&p.doseHom!=='—'?'/'+esc(p.doseHom):p.doseConseillee?' (conseillée : '+esc(p.doseConseillee)+')':''} ${esc(p.unite||'')} · ${esc(p.cible||p.sa||'')}</div></div>
     <span class="ift mono">${ift==null?'<span style="color:var(--mute);font-size:11px">hors IFT</span>':fmt(ift,2)}</span>
     <button class="iconbtn btn-danger" onclick="retirerPanier(${i})" title="Retirer"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
   </div>`;}).join('');
@@ -1029,7 +1033,7 @@ function renderProduits(){
        <td><b>${esc(p.n)}</b>${p.amm?`<br><span style="font-size:11px;color:var(--mute)">AMM ${esc(p.amm)}</span>`:''}</td>
        <td><span class="tag-pill ${TYPES[p.type]?.cat==='none'?'mute':TYPES[p.type]?.cat==='bio'?'laiton':''}">${esc((TYPES[p.type]||TYPES.autre).lbl.split(' ')[0])}</span></td>
        <td style="font-size:12px;color:var(--mute)">${esc(p.sa||'')}</td>
-       <td class="mono">${esc(p.doseHom||'—')}</td>
+       <td class="mono">${p.doseConseillee?esc(p.doseConseillee)+' <span style="font-size:10px;color:var(--mute)">(cons.)</span>':esc(p.doseHom||'—')}</td>
        <td>${esc(p.unite||'')}</td>
        <td class="mono">${esc(p.dar||'—')}</td>
        <td class="mono">${esc(p.znt||'—')}</td>
@@ -1051,75 +1055,97 @@ function renderProduits(){
 function ajouterProduitPerso(idx){
   const p=idx!=null?getProduitsPerso()[idx]:null;
   openModal(p?'Modifier le produit':'Ajouter un produit',`
-    <div class="row" style="margin-bottom:10px">
-      <button class="btn ${!p||p.categorie!=='mfsc'?'btn-g':'btn-o'}" id="tabPPP" onclick="switchTabProduit('ppp')" style="flex:1;justify-content:center">PPP hors liste</button>
-      <button class="btn ${p?.categorie==='mfsc'?'btn-g':'btn-o'}" id="tabMFSC" onclick="switchTabProduit('mfsc')" style="flex:1;justify-content:center">MFSC / Engrais foliaire</button>
-    </div>
     <div id="formProduit"></div>
     <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="saveProduitPerso(${idx??'null'})">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>${p?'Enregistrer les modifications':'Ajouter au référentiel'}</button>`,
   );
-  switchTabProduit(p?.categorie==='mfsc'?'mfsc':'ppp', p);
+  renderFormProduit(p);
 }
 function editProduitPerso(idx){ ajouterProduitPerso(idx); }
 
-function switchTabProduit(mode, p){
-  document.getElementById('tabPPP').className='btn '+(mode==='ppp'?'btn-g':'btn-o');
-  document.getElementById('tabMFSC').className='btn '+(mode==='mfsc'?'btn-g':'btn-o');
-  document.getElementById('tabPPP').style.flex='1';document.getElementById('tabPPP').style.justifyContent='center';
-  document.getElementById('tabMFSC').style.flex='1';document.getElementById('tabMFSC').style.justifyContent='center';
-  const isMFSC=mode==='mfsc';
+function renderFormProduit(p){
+  const FONCTIONS=['Fongicide','Insecticide','Acaricide','Herbicide','Attractif phéromone',
+                   'MFSC','Correcteur de carence','Autre'];
   document.getElementById('formProduit').innerHTML=`
-    <input type="hidden" id="hl_cat" value="${mode}">
+    <input type="hidden" id="hl_cat" value="ppp">
     <div class="row">
       <div class="field" style="flex:2"><label>Nom commercial *</label>
-        <input id="hl_nom" value="${esc(p?.n||'')}" placeholder="${isMFSC?'ex. FERTISTIM K, AMINO VITIS…':'ex. PRODUIT XYZ'}"></div>
-      ${isMFSC
-        ?`<div class="field"><label>Fabricant</label><input id="hl_fab" value="${esc(p?.fabricant||'')}" placeholder="ex. De Sangosse"></div>`
-        :`<div class="field"><label>N° AMM</label><input id="hl_amm" value="${esc(p?.amm||'')}" placeholder="optionnel"></div>`}
+        <input id="hl_nom" value="${esc(p?.n||'')}" placeholder="ex. FOLPEC ADVANCE, FERTISTIM K…"></div>
+      <div class="field"><label>N° AMM</label>
+        <input id="hl_amm" value="${esc(p?.amm||'')}" placeholder="optionnel"></div>
     </div>
     <div class="row">
-      <div class="field" style="flex:2"><label>${isMFSC?'Composition / usage':'Substance(s) active(s) *'}</label>
-        <input id="hl_sa" value="${esc(p?.sa||'')}" placeholder="${isMFSC?'ex. Acides aminés, potassium…':'ex. cymoxanil 45 g/kg'}"></div>
-      ${isMFSC?'':`<div class="field"><label>Fonction</label>
-        <select id="hl_fonc">${['Fongicide','Insecticide','Acaricide','Herbicide','Attractif phéromone','Autre'].map(f=>`<option ${p?.f===f?'selected':''}>${f}</option>`).join('')}</select></div>`}
+      <div class="field" style="flex:2"><label>Substance(s) active(s) / composition</label>
+        <input id="hl_sa" value="${esc(p?.sa||'')}" placeholder="ex. cymoxanil 45 g/kg, acides aminés…"></div>
+      <div class="field"><label>Fonction *</label>
+        <select id="hl_fonc" onchange="majFormFonction()">${FONCTIONS.map(f=>`<option ${p?.f===f?'selected':''}>${f}</option>`).join('')}</select></div>
     </div>
-    ${isMFSC?'':`
-    <div class="row">
-      <div class="field"><label>Dose homologuée *</label><input id="hl_dosehom" value="${esc(p?.doseHom||'')}" type="text" inputmode="decimal" placeholder="0"></div>
-      <div class="field"><label>Unité</label>
-        <select id="hl_unite">${['kg/ha','L/ha','g/ha','mL/ha'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
-      <div class="field"><label>DAR (jours)</label><input id="hl_dar" value="${esc(p?.dar||'')}" type="number" min="0" placeholder="—"></div>
-      <div class="field"><label>ZNT (m)</label>
-        <select id="hl_znt">${['','5','20','50','100'].map(z=>`<option ${p?.znt==z?'selected':''}>${z||'—'}</option>`).join('')}</select></div>
+    <div id="hl_ppp_fields">
+      <div class="row">
+        <div class="field"><label>Dose homologuée</label><input id="hl_dosehom" value="${esc(p?.doseHom&&p.doseHom!=='—'?p.doseHom:'')}" type="text" inputmode="decimal" placeholder="0"></div>
+        <div class="field"><label>Unité</label>
+          <select id="hl_unite">${['kg/ha','L/ha','g/ha','mL/ha','mL/hL','g/hL','L/hL'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label>DAR (jours)</label><input id="hl_dar" value="${esc(p?.dar||'')}" type="number" min="0" placeholder="—"></div>
+        <div class="field"><label>ZNT (m)</label>
+          <select id="hl_znt">${['','5','20','50','100'].map(z=>`<option ${p?.znt==z?'selected':''}>${z||'—'}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Phrases de risque (séparées par |)</label>
+        <input id="hl_h" value="${esc(p?.h||'')}" placeholder="ex. H317 | H400 | H410"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:10px">
+        <input type="checkbox" id="hl_cmr" ${p?.cmr==='OUI'?'checked':''}> Produit CMR</label>
     </div>
-    <div class="field"><label>Phrases de risque (séparées par |)</label>
-      <input id="hl_h" value="${esc(p?.h||'')}" placeholder="ex. H317 | H400 | H410"></div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:10px">
-      <input type="checkbox" id="hl_cmr" ${p?.cmr==='OUI'?'checked':''}> Produit CMR</label>
-    <div class="field"><label>Type d'IFT</label>
-      <select id="hl_type">${Object.keys(TYPES).map(k=>`<option value="${k}" ${(p?.type||'fongicide')===k?'selected':''}>${esc(TYPES[k].lbl)}</option>`).join('')}</select></div>
-    `}`;
-  if(isMFSC) setTimeout(()=>{const t=document.getElementById('hl_type');if(t)t.value='mfsc';},10);
+    <div id="hl_mfsc_fields" style="display:none">
+      <div class="row">
+        <div class="field"><label>Dose conseillée</label>
+          <input id="hl_doseconseillee" value="${esc(p?.doseConseillee||'')}" type="text" inputmode="decimal" placeholder="ex. 2"></div>
+        <div class="field"><label>Unité</label>
+          <select id="hl_unite">${['L/ha','kg/ha','mL/hL','g/hL','L/hL','mL/ha','g/ha'].map(u=>`<option ${p?.unite===u?'selected':''}>${u}</option>`).join('')}</select></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--mute);margin-bottom:10px">La dose conseillée est affichée dans le bilan mais ne génère pas d'IFT.</div>
+    </div>
+    <div class="field"><label>Type IFT</label>
+      <select id="hl_type">${Object.keys(TYPES).map(k=>`<option value="${k}" ${(p?.type||'fongicide')===k?'selected':''}>${esc(TYPES[k].lbl)}</option>`).join('')}</select></div>`;
+  majFormFonction(p);
 }
+function majFormFonction(p){
+  const fonc=document.getElementById('hl_fonc')?.value||'';
+  const isHorsIFT=['MFSC','Correcteur de carence'].includes(fonc);
+  const pppFields=document.getElementById('hl_ppp_fields');
+  const mfscFields=document.getElementById('hl_mfsc_fields');
+  if(pppFields) pppFields.style.display=isHorsIFT?'none':'block';
+  if(mfscFields) mfscFields.style.display=isHorsIFT?'block':'none';
+  // auto-sélection du type IFT selon la fonction
+  const typeMap={'Fongicide':'fongicide','Insecticide':'insecticide','Acaricide':'insecticide',
+    'Herbicide':'herbicide','Attractif phéromone':'biocontrole','MFSC':'mfsc',
+    'Correcteur de carence':'mfsc','Autre':'autre'};
+  const t=document.getElementById('hl_type');
+  if(t && !p) t.value=typeMap[fonc]||'autre';
+}
+
+function switchTabProduit(mode,p){} // conservé pour compatibilité anciens appels
 
 function saveProduitPerso(idx){
   const g=id=>document.getElementById(id)?.value?.trim()||'';
-  const cat=g('hl_cat'), isMFSC=cat==='mfsc';
   const nom=g('hl_nom'); if(!nom){toast('Le nom est obligatoire.');return;}
-  if(!isMFSC && !g('hl_sa')){toast('Indiquez la substance active.');return;}
-  if(!isMFSC && !g('hl_dosehom')){toast('Indiquez la dose homologuée.');return;}
-  const prod=isMFSC
-    ?{n:nom,sa:g('hl_sa'),f:'MFSC/Engrais foliaire',h:'',cmr:'NON',fam:{},type:'mfsc',
-      fabricant:g('hl_fab'),unite:g('hl_unite')||'L/ha',doseHom:'—',dar:'',znt:'',categorie:'mfsc',horsListe:true}
-    :{n:nom,sa:g('hl_sa'),f:g('hl_fonc'),h:g('hl_h'),cmr:document.getElementById('hl_cmr')?.checked?'OUI':'NON',
-      fam:{},type:g('hl_type'),amm:g('hl_amm'),unite:g('hl_unite'),
-      doseHom:g('hl_dosehom'),dar:g('hl_dar'),znt:g('hl_znt'),categorie:'ppp',horsListe:true};
+  const fonc=g('hl_fonc');
+  const isHorsIFT=['MFSC','Correcteur de carence'].includes(fonc);
+  const prod={
+    n:nom, sa:g('hl_sa'), f:fonc, amm:g('hl_amm'),
+    h:isHorsIFT?'':g('hl_h'),
+    cmr:(!isHorsIFT&&document.getElementById('hl_cmr')?.checked)?'OUI':'NON',
+    fam:{}, type:g('hl_type'),
+    unite:g('hl_unite')||'L/ha',
+    doseHom:isHorsIFT?'—':(g('hl_dosehom')||'—'),
+    doseConseillee:isHorsIFT?g('hl_doseconseillee'):'',
+    dar:isHorsIFT?'':g('hl_dar'),
+    znt:isHorsIFT?'':g('hl_znt'),
+    categorie:isHorsIFT?'mfsc':'ppp', horsListe:true
+  };
   if(!meta.produits_perso) meta.produits_perso=[];
   if(idx===null||idx==null) meta.produits_perso.push(prod);
   else meta.produits_perso[idx]=prod;
   saveDB(); closeModal(); renderProduits();
-  toast(isMFSC?'MFSC enregistré':'PPP enregistré');
+  toast(isHorsIFT?`${fonc} enregistré`:'PPP enregistré');
 }
 function supprimerProduitPerso(idx){
   if(!confirm('Supprimer ce produit ?'))return;
