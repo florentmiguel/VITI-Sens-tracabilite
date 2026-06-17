@@ -497,8 +497,8 @@ function iftInt(pr){
   if(da>0&&dh>0) return da/dh;
   return (pr.ift!=null? +pr.ift : null);
 }
-function recalcIFTs(list){ (list||[]).forEach(pa=>{ (pa.produits||[]).forEach(pr=>{
-  const counts=(((TYPES[pr.type]||TYPES.autre).ift)||estBio(pr)) && !pa.fd;
+function recalcIFTs(list){ (list||[]).forEach(pa=>{ pa.fd=false; (pa.produits||[]).forEach(pr=>{
+  const counts=((TYPES[pr.type]||TYPES.autre).ift)||estBio(pr);
   if(!counts){ pr.ift=null; return; }
   const da=parseFloat(String(pr.doseAppli).replace(',','.'));
   const ref=(pr.doseRef!=null&&pr.doseRef!=='')?pr.doseRef:pr.doseHom;
@@ -771,8 +771,6 @@ function renderSaisie(){
           <option value="">— choisir —</option>${BBCH.map(b=>`<option value="${b[0]}">${esc(b[1])}</option>`).join('')}</select></div></div>
       <div class="row"><div class="field"><label>Îlot traité</label><select id="sIlot" onchange="majInstrument()">${ilotOpts}</select></div>
         <div class="field"><label>Pluviométrie (mm)</label><input id="sPluvio" type="number" min="0" placeholder="0"></div></div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;background:var(--lie-soft);padding:9px 12px;border-radius:var(--rs);margin-bottom:4px">
-        <input type="checkbox" id="sFD" onchange="renderPanier();majInstrument()"> <b>Lutte obligatoire Flavescence dorée</b> — passage exclu de l'IFT</label>
       <div style="border-top:1px solid var(--line);margin:12px 0 16px"></div>
       <div class="field ac"><label>Produit (${EPHY.length} spécialités autorisées)</label>
         <input id="sProd" autocomplete="off" placeholder="Nom commercial…" oninput="acSearch(this.value)" onfocus="acSearch(this.value)">
@@ -909,7 +907,7 @@ function majInstrument(){
   const mode=document.getElementById('sDoseMode')?.value||'ha';
   const doseHa=doseHaEff();
   const type=document.getElementById('sType')?.value||'fongicide';
-  const fd=document.getElementById('sFD')?.checked;
+  const fd=false;
   const compte=(estBio(curProd)||(TYPES[type]||TYPES.autre).ift) && !fd;
   const ref=u?refPourIFT(curProd?.amm,u.c,type,u.d,u.un):null;
   const refDose=ref?ref.d:(u?u.d:null);
@@ -966,7 +964,7 @@ function retirerPanier(i){panier.splice(i,1);renderPanier();majInstrument();}
 function panierIFT(p,fd){return produitCompteIFT(p,fd)?p.iftBrut:null;}
 function renderPanier(){
   const box=document.getElementById('panierBox');
-  const fd=document.getElementById('sFD')?.checked;
+  const fd=false;
   const stade=document.getElementById('sStade')?.value;
   document.getElementById('panCount').textContent=panier.length+' produit'+(panier.length>1?'s':'');
   if(!panier.length){box.innerHTML='<div style="color:var(--mute);font-size:13px;text-align:center;padding:14px 0">Aucun produit. Recherchez une spécialité et ajoutez-la.</div>';
@@ -1000,7 +998,7 @@ function enregistrerPassage(){
   if(!panier.length){toast('La bouillie est vide.');return;}
   const ilot=document.getElementById('sIlot').value;
   const stadeCode=document.getElementById('sStade').value;
-  const fd=document.getElementById('sFD').checked;
+  const fd=false;
   const probs=analyseMelange(panier,stadeCode);
   const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
   const avert=[...surdos.map(p=>'Surdosage : '+p.n+' ('+p.doseAppli+' > '+p.doseHom+' '+(p.unite||'')+')'),...probs.map(p=>p.t)];
@@ -1072,6 +1070,11 @@ function iftCertifCard(){
     <div style="font-size:11px;color:var(--mute);margin-top:10px;line-height:1.5"><b>Aujourd'hui :</b> exportez vos traitements, déposez-les dans l'Atelier de calcul (« Je conseille »), récupérez l'IFT certifié signé + son QR de vérification. <b>Étape suivante prévue :</b> connexion automatique à l'API du ministère pour obtenir l'IFT certifié sans ressaisie (nécessite une passerelle serveur).</div>
   </div>`;
 }
+let bilanFilter={ilot:null,date:null};
+function _scrollBilan(){ requestAnimationFrame(function(){ const el=document.getElementById('bilanPassagesTop'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }); }
+function filtrerBilanIlot(k){ bilanFilter={ilot:(bilanFilter.ilot===k?null:k),date:null}; renderBilan(); if(bilanFilter.ilot)_scrollBilan(); }
+function filtrerBilanDate(d){ bilanFilter={ilot:null,date:(bilanFilter.date===d?null:d)}; renderBilan(); if(bilanFilter.date)_scrollBilan(); }
+function resetBilanFiltre(){ bilanFilter={ilot:null,date:null}; renderBilan(); }
 function renderBilan(){
   const sorted=[...passages].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const ex=iftExploit(); const exTot=ex.h+ex.hh;
@@ -1093,22 +1096,24 @@ function renderBilan(){
        <div><div class="stat" style="border:none;box-shadow:none;padding:8px 0"><div class="k">dont IFT hors-herbicide</div><div class="v mono" style="font-size:24px">${fmt(ex.hh,2)}</div></div></div>
        <div><div class="stat" style="border:none;box-shadow:none;padding:8px 0"><div class="k">IFT biocontrôle (séparé)</div><div class="v mono" style="font-size:24px;color:var(--vigne)">${fmt(ex.bio,2)}</div></div></div>
      </div>
-     <div style="font-size:11.5px;color:var(--mute);margin-top:8px">Chaque passage est pondéré par la part de surface plantée de son îlot dans l'exploitation : Σ ( IFT passage × S.plantée îlot / S.plantée totale ). Lutte FD obligatoire et adjuvants/MFSC exclus.</div>
+     <div style="font-size:11.5px;color:var(--mute);margin-top:8px">Chaque passage est pondéré par la part de surface plantée de son îlot dans l'exploitation : Σ ( IFT passage × S.plantée îlot / S.plantée totale ). Adjuvants et engrais foliaires (MFSC) exclus.</div>
    </div>
 
    ${iftCertifCard()}
 
    ${Object.keys(parIlot).length?`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>IFT par îlot (cumul des passages, non lissé)</h3></div>
    <div class="tbl-wrap"><table><thead><tr><th>Îlot</th><th>Passages</th><th>IFT herbicide</th><th>IFT hors-herbicide</th><th>IFT biocontrôle</th><th style="text-align:right">IFT total</th></tr></thead><tbody>
-   ${Object.entries(parIlot).map(([k,v])=>`<tr><td><span class="tag-pill">${esc(k)}</span></td><td class="mono">${v.nb}</td>
+   ${Object.entries(parIlot).map(([k,v])=>`<tr data-ilot="${esc(k)}" onclick="filtrerBilanIlot(this.dataset.ilot)" style="cursor:pointer${bilanFilter.ilot===k?';background:var(--vigne-soft)':''}"><td><span class="tag-pill">${esc(k)}</span></td><td class="mono">${v.nb}</td>
      <td class="mono">${fmt(v.h,2)}</td><td class="mono">${fmt(v.hh,2)}</td><td class="mono">${fmt(v.bio,2)}</td>
      <td style="text-align:right" class="mono"><b>${fmt(v.h+v.hh,2)}</b></td></tr>`).join('')}
    </tbody></table></div></div>`:''}
 
-   ${(function(){ const _St=sTotExploit(); if(!sorted.length) return ''; let _rows='',_tot=0; sorted.forEach(function(pa){ const _sPl=ilotSurfaces(pa.ilot).pl||pa.sPl||0; const _part=(_St>0&&_sPl>0)?_sPl/_St:1; const _hb=pa.fd?0:pa.produits.reduce(function(a,p){const v=iftInt(p);return a+((v!=null&&catIFT(p)!=='bio')?v:0);},0); const _c=_hb*_part; _tot+=_c; _rows+=`<tr><td>${esc(dateFR(pa.date))}</td><td><span class="tag-pill">${esc(pa.ilot||'')}</span>${pa.fd?' <span class="tag-pill lie">FD</span>':''}</td><td class="mono">${fmt(_sPl/100,2)} ha</td><td class="mono">${pa.fd?'—':fmt(_hb,2)}</td><td class="mono">${fmt(_part*100,1)} %</td><td style="text-align:right" class="mono">${pa.fd?'—':'<b>'+fmt(_c,3)+'</b>'}</td></tr>`; }); return `<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>IFT par date — contribution pondérée à l'exploitation</h3></div><div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Îlot</th><th>Surface</th><th>IFT passage</th><th>Part exploit.</th><th style="text-align:right">IFT pondéré</th></tr></thead><tbody>${_rows}</tbody><tfoot><tr><td colspan="5" style="text-align:right"><b>Total IFT exploitation (hors biocontrôle)</b></td><td style="text-align:right" class="mono"><b>${fmt(_tot,2)}</b></td></tr></tfoot></table></div><div style="font-size:11.5px;color:var(--mute);padding:8px 16px">Chaque passage est pondéré par la part de surface plantée de son îlot dans l'exploitation. Un traitement saisi en global (toute l'exploitation) ou fractionné (maison + dsppr) à la même date donne le même total. Lutte FD obligatoire exclue.</div></div>`; })()}
+   ${(function(){ const _St=sTotExploit(); if(!sorted.length) return ''; let _rows='',_tot=0; sorted.forEach(function(pa){ const _sPl=ilotSurfaces(pa.ilot).pl||pa.sPl||0; const _part=(_St>0&&_sPl>0)?_sPl/_St:1; const _hb=pa.fd?0:pa.produits.reduce(function(a,p){const v=iftInt(p);return a+((v!=null&&catIFT(p)!=='bio')?v:0);},0); const _c=_hb*_part; _tot+=_c; _rows+=`<tr data-date="${pa.date}" onclick="filtrerBilanDate(this.dataset.date)" style="cursor:pointer${bilanFilter.date===pa.date?';background:var(--vigne-soft)':''}"><td>${esc(dateFR(pa.date))}</td><td><span class="tag-pill">${esc(pa.ilot||'')}</span>${pa.fd?' <span class="tag-pill lie">FD</span>':''}</td><td class="mono">${fmt(_sPl/100,2)} ha</td><td class="mono">${pa.fd?'—':fmt(_hb,2)}</td><td class="mono">${fmt(_part*100,1)} %</td><td style="text-align:right" class="mono">${pa.fd?'—':'<b>'+fmt(_c,3)+'</b>'}</td></tr>`; }); return `<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>IFT par date — contribution pondérée à l'exploitation</h3></div><div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Îlot</th><th>Surface</th><th>IFT passage</th><th>Part exploit.</th><th style="text-align:right">IFT pondéré</th></tr></thead><tbody>${_rows}</tbody><tfoot><tr><td colspan="5" style="text-align:right"><b>Total IFT exploitation (hors biocontrôle)</b></td><td style="text-align:right" class="mono"><b>${fmt(_tot,2)}</b></td></tr></tfoot></table></div><div style="font-size:11.5px;color:var(--mute);padding:8px 16px">Chaque passage est pondéré par la part de surface plantée de son îlot dans l'exploitation. Un traitement saisi en global (toute l'exploitation) ou fractionné (maison + dsppr) à la même date donne le même total.</div></div>`; })()}
 
+   <div id="bilanPassagesTop" style="scroll-margin-top:16px"></div>
+   ${(bilanFilter.ilot||bilanFilter.date)?`<div class="card pad" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--vigne-soft)"><div style="font-size:13px">Filtre : <b>${bilanFilter.ilot?'\u00eelot '+esc(bilanFilter.ilot):'date '+esc(dateFR(bilanFilter.date))}</b>${(function(){const n=sorted.filter(pa=>(!bilanFilter.ilot||pa.ilot===bilanFilter.ilot)&&(!bilanFilter.date||pa.date===bilanFilter.date)).length;return n===0?' \u00b7 <span style=\'color:var(--lie)\'>aucun passage</span>':' \u00b7 '+n+' passage'+(n>1?'s':'');})()}</div><button class="btn btn-o btn-sm" onclick="resetBilanFiltre()">Tout afficher</button></div>`:''}
    ${passages.length===0?`<div class="card">${emptyState('Aucun passage','Les passages enregistrés apparaîtront ici.')}</div>`:
-   sorted.map(pa=>{const iftP=pa.fd?null:pa.produits.reduce((a,p)=>a+(iftInt(p)||0),0);return`
+   sorted.filter(pa=>(!bilanFilter.ilot||pa.ilot===bilanFilter.ilot)&&(!bilanFilter.date||pa.date===bilanFilter.date)).map(pa=>{const iftP=pa.produits.reduce((a,p)=>a+(iftInt(p)||0),0);return`
     <div class="card" style="margin-bottom:14px">
       <div class="card-h"><div><h3>${esc(dateFR(pa.date))} · ${esc(pa.ilot||'')} ${pa.fd?'<span class="tag-pill lie">Lutte FD</span>':''}</h3>
         <div style="font-size:12px;color:var(--mute);margin-top:2px">${esc(pa.stadeLbl||pa.stade||'Stade non précisé')} · ratio ${fmt(pa.ratio||1,3)}${pa.pluvio?` · ${esc(pa.pluvio)} mm`:''}</div></div>
@@ -1145,7 +1150,6 @@ function editPassage(id){
     const sStade=document.getElementById('sStade'); if(sStade)sStade.value=pa.stade||'';
     const sIlot=document.getElementById('sIlot'); if(sIlot)sIlot.value=pa.ilot||'';
     const sPluvio=document.getElementById('sPluvio'); if(sPluvio)sPluvio.value=pa.pluvio||'';
-    const sFD=document.getElementById('sFD'); if(sFD)sFD.checked=!!pa.fd;
     // panier
     panier=pa.produits.map(p=>({...p}));
     renderPanier(); majInstrument();
@@ -1165,7 +1169,7 @@ function updatePassage(){
   const idx=passages.findIndex(p=>p.id===_editingId); if(idx<0)return;
   const ilot=document.getElementById('sIlot').value;
   const stadeCode=document.getElementById('sStade').value;
-  const fd=document.getElementById('sFD').checked;
+  const fd=false;
   const probs=analyseMelange(panier,stadeCode);
   const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
   const avert=[...surdos.map(p=>'Surdosage : '+p.n),...probs.map(p=>p.t)];
@@ -2712,7 +2716,7 @@ async function registrePDF(){
     doc.text(c[1],x+cw/2,y+11,{align:'center'});});
   y+=ch+3;
   doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(C.mute[0],C.mute[1],C.mute[2]);
-  doc.text(doc.splitTextToSize('IFT cumulé de la campagne, lissé sur la surface plantée de l’exploitation (adjuvants, MFSC et passages en lutte Flavescence dorée obligatoire exclus du calcul ; biocontrôle suivi séparément).',CW),M,y+1);
+  doc.text(doc.splitTextToSize('IFT cumulé de la campagne, lissé sur la surface plantée de l’exploitation (adjuvants et MFSC exclus du calcul ; biocontrôle suivi séparément).',CW),M,y+1);
   y+=8;
 
   // ===== PASSAGES =====
