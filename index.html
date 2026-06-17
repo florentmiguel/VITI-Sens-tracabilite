@@ -962,6 +962,24 @@ function ajouterAuPanier(){
 }
 function retirerPanier(i){panier.splice(i,1);renderPanier();majInstrument();}
 function panierIFT(p,fd){return produitCompteIFT(p,fd)?p.iftBrut:null;}
+function reEditPanier(i){
+  const p=panier[i]; if(!p)return;
+  const cp=EPHY_BY_NAME[p.n];
+  if(cp){ curProd=cp; }
+  else { curProd={n:p.n,amm:p.amm,sa:p.sa,f:p.f,h:p.h,cmr:p.cmr,fam:p.fam||{},type:p.type,_perso:!!p.horsListe,
+      u:(p.doseHom&&p.doseHom!=='\u2014')?[{c:p.cible||'Usage',d:p.doseHom,un:p.unite,dar:p.dar,znt:p.znt}]:[]}; }
+  panier.splice(i,1);
+  document.getElementById('sProd').value=p.n;
+  renderProdDetail();
+  const tEl=document.getElementById('sType'); if(tEl)tEl.value=p.type;
+  const uEl=document.getElementById('sUsage');
+  if(uEl&&curProd.u&&curProd.u.length){ let idx=curProd.u.findIndex(function(u){return (u.c||'')===(p.cible||'');}); if(idx<0)idx=0; uEl.value=String(idx); }
+  const mEl=document.getElementById('sDoseMode'); if(mEl)mEl.value=p.doseMode||'ha';
+  const dEl=document.getElementById('sDose'); if(dEl)dEl.value=(p.doseMode==='tot'&&p.qteTot!=null)?p.qteTot:p.doseAppli;
+  renderPanier(); majInstrument();
+  const pd=document.getElementById('prodDetail'); if(pd)pd.scrollIntoView({behavior:'smooth',block:'center'});
+  toast('Produit recharg\u00e9 \u2014 corrigez la cible ou la dose, puis \u00ab Ajouter \u00e0 la bouillie \u00bb');
+}
 function renderPanier(){
   const box=document.getElementById('panierBox');
   const fd=false;
@@ -969,13 +987,13 @@ function renderPanier(){
   document.getElementById('panCount').textContent=panier.length+' produit'+(panier.length>1?'s':'');
   if(!panier.length){box.innerHTML='<div style="color:var(--mute);font-size:13px;text-align:center;padding:14px 0">Aucun produit. Recherchez une spécialité et ajoutez-la.</div>';
     document.getElementById('cmrAlert').innerHTML='';return;}
-  box.innerHTML=panier.map((p,i)=>{const ift=panierIFT(p,fd);const sd=estSurdosage(p.doseAppli,p.doseHom);return`<div class="prod-line" ${sd?'style="border-color:var(--lie);background:var(--lie-soft)"':''}>
+  box.innerHTML=panier.map((p,i)=>{const ift=panierIFT(p,fd);const sd=estSurdosage(p.doseAppli,p.doseHom);return`<div class="prod-line" onclick="reEditPanier(${i})" title="Cliquer pour corriger la cible ou la dose" style="cursor:pointer${sd?';border-color:var(--lie);background:var(--lie-soft)':''}">
     <div><div class="nm">${esc(p.n)}
       <span class="tag-pill ${TYPES[p.type].cat==='none'?'mute':TYPES[p.type].cat==='bio'?'laiton':''}" style="font-size:10px">${esc(TYPES[p.type].lbl.split(' ')[0])}</span>
       ${sd?' <span class="tag-pill lie" style="font-size:10px">surdosage</span>':''}</div>
       <div class="meta">${esc(p.doseAppli)}${p.doseHom&&p.doseHom!=='—'?'/'+esc(p.doseHom):p.doseConseillee?' (conseillée : '+esc(p.doseConseillee)+')':''} ${esc(p.unite||'')}${p.qteTot?' (total '+esc(p.qteTot)+' '+esc(p.unite||'')+')':''} · ${esc(p.cible||p.sa||'')}</div></div>
     <span class="ift mono">${ift==null?'<span style="color:var(--mute);font-size:11px">hors IFT</span>':fmt(ift,2)}</span>
-    <button class="iconbtn btn-danger" onclick="retirerPanier(${i})" title="Retirer"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+    <button class="iconbtn btn-danger" onclick="event.stopPropagation();retirerPanier(${i})" title="Retirer"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
   </div>`;}).join('');
   const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
   const probs=analyseMelange(panier,stade);
