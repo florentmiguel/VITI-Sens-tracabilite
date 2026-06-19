@@ -160,6 +160,11 @@ tbody tr:hover{background:var(--craie)}
 #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--ink);color:#fff;padding:11px 20px;border-radius:30px;font-size:13.5px;font-weight:500;z-index:90;transition:transform .3s;box-shadow:0 10px 30px rgba(0,0,0,.3)}
 #toast.show{transform:translateX(-50%) translateY(0)}
 
+.saisieGrid{display:grid;grid-template-columns:1.15fr .85fr;align-items:start;gap:18px}
+.ilotPick{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:var(--rs);padding:6px}
+.ilotPick label{display:flex;align-items:center;gap:11px;font-size:14px;cursor:pointer;padding:9px 8px;border-radius:8px;min-height:44px}
+.ilotPick label:active{background:var(--vigne-soft)}
+.ilotPick input{width:21px;height:21px;flex:0 0 auto;margin:0;accent-color:var(--laiton)}
 @media(max-width:860px){
   #app{grid-template-columns:1fr}
   .nav{position:fixed;bottom:0;left:0;right:0;top:auto;height:auto;flex-direction:row;border-right:none;border-top:1px solid var(--line);padding:6px;z-index:30;justify-content:space-around;overflow-x:auto}
@@ -170,6 +175,8 @@ tbody tr:hover{background:var(--craie)}
   .main{padding:22px 16px 90px}
   .g3,.g4,.g2{grid-template-columns:1fr}
   .topbar .tag{display:none}
+  .saisieGrid{grid-template-columns:1fr}
+  .ilotPick{max-height:48vh}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -324,6 +331,8 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const CONSULTANT_UID= '150f1d10-56b8-44b2-83f5-8f790b0c091a';
 const SB_OK = !/^__/.test(SUPABASE_URL) && typeof supabase!=='undefined';
 const SB = SB_OK ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON) : null;
+/* Accès payant : passer à true UNE FOIS la table abonnements + les Edge Functions Stripe déployées et testées. */
+const PAYWALL_ACTIF = false;
 
 /* ===================== ÉTAT ===================== */
 let parcelles=[], ilots=[], ilot_parcelles={}, passages=[], meta={client:'',campagne:String(new Date().getFullYear())};
@@ -404,6 +413,10 @@ async function doLogin(){
 async function afterLogin(){
   isConsultant = !!CONSULTANT_UID && !/^__/.test(CONSULTANT_UID) && session.user.id===CONSULTANT_UID;
   document.querySelectorAll('.consultant-only').forEach(e=>e.style.display=isConsultant?'':'none');
+  if(PAYWALL_ACTIF && !isConsultant){
+    const ab=await chargerAbonnement(session.user.id);
+    if(!accesAutorise(ab)){ afficherPaywall(ab); return; }
+  }
   // topbar : "Mode consultant" ou "Client …"
   const lbl=document.getElementById('ctxConsultantLabel');
   const csp=document.getElementById('ctxClientSpan');
@@ -466,6 +479,51 @@ function saveWelcome(){
   toast('Exploitation enregistrée — bienvenue !');
   go('dash');
 }
+/* ===================== ACCÈS PAYANT ===================== */
+async function chargerAbonnement(uid){
+  if(!SB) return null;
+  try{ const {data}=await SB.from('abonnements').select('*').eq('user_id',uid).maybeSingle(); return data; }
+  catch(e){ return null; }
+}
+function accesAutorise(ab){
+  if(!ab) return true; // pas de ligne -> ne pas verrouiller (amorçage)
+  if(ab.statut==='actif') return true;
+  const futur=d=>d && new Date(d) > new Date();
+  if(ab.statut==='essai' && futur(ab.essai_fin)) return true;
+  if(ab.statut==='en_retard' && futur(ab.periode_fin)) return true; // tolérance jusqu'à fin de période payée
+  return false;
+}
+function afficherPaywall(ab){
+  const lg=document.getElementById('login'); if(lg)lg.style.display='none';
+  const ap=document.getElementById('app'); if(ap)ap.style.display='none';
+  let host=document.getElementById('paywall');
+  if(!host){ host=document.createElement('div'); host.id='paywall'; document.body.appendChild(host); }
+  const enRetard = ab && ab.statut==='en_retard';
+  const titre = enRetard ? 'Paiement en attente' : "Votre période d'essai est terminée";
+  const msg = enRetard
+    ? "Votre dernier paiement n'a pas abouti. Régularisez votre abonnement pour continuer à utiliser VITI Sens."
+    : "Pour continuer à utiliser VITI Sens et accéder à vos données, choisissez une formule d'abonnement. Vos données sont conservées.";
+  host.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--vigne,#1F3A2E);padding:20px';
+  host.innerHTML=`<div style="max-width:440px;width:100%;background:var(--paper,#F1F2EC);border-radius:16px;padding:30px 28px;box-shadow:0 20px 60px rgba(0,0,0,.3)">`
+    +`<div style="font-family:var(--display,serif);font-size:24px;font-weight:600;color:var(--vigne,#1F3A2E);margin-bottom:8px">${titre}</div>`
+    +`<div style="font-size:14px;color:var(--ink,#222);line-height:1.5;margin-bottom:22px">${msg}</div>`
+    +`<button onclick="lancerAbonnement()" style="width:100%;padding:13px;border:none;border-radius:10px;background:var(--vigne,#1F3A2E);color:#fff;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px">S'abonner</button>`
+    +`<button onclick="ouvrirPortail()" style="width:100%;padding:11px;border:1px solid var(--line,#ccc);border-radius:10px;background:transparent;color:var(--vigne,#1F3A2E);font-size:13px;cursor:pointer;margin-bottom:10px">Gérer mon abonnement / mes factures</button>`
+    +`<button onclick="logout()" style="width:100%;padding:8px;border:none;background:transparent;color:var(--mute,#888);font-size:12px;cursor:pointer">Se déconnecter</button></div>`;
+}
+async function lancerAbonnement(){
+  if(!SB)return;
+  try{ const {data,error}=await SB.functions.invoke('stripe-checkout',{body:{action:'checkout'}});
+    if(error||!data||!data.url){toast('Connexion au paiement impossible.');return;}
+    location.href=data.url;
+  }catch(e){ toast('Connexion au paiement impossible.'); }
+}
+async function ouvrirPortail(){
+  if(!SB)return;
+  try{ const {data}=await SB.functions.invoke('stripe-checkout',{body:{action:'portal'}});
+    if(data&&data.url)location.href=data.url; else toast('Aucun abonnement à gérer pour le moment.');
+  }catch(e){ toast('Action impossible.'); }
+}
 async function logout(){ if(SB)await SB.auth.signOut(); location.reload(); }
 
 /* ===================== CALCULS ===================== */
@@ -476,13 +534,41 @@ function parcDansIlot(nom){
 }
 function ratioIlot(nom){
   const ps=parcDansIlot(nom);
-  const cad=ps.reduce((s,p)=>s+(+p.cad||0),0);
-  const pl =ps.reduce((s,p)=>s+(+p.pl ||0),0);
+  const cad=ps.reduce((s,p)=>s+parcelleCad(p),0);
+  const pl =ps.reduce((s,p)=>s+parcellePl(p),0);
   return cad>0?pl/cad:1;
 }
 function ilotSurfaces(nom){
   const ps=parcDansIlot(nom);
-  return {cad:ps.reduce((s,p)=>s+(+p.cad||0),0), pl:ps.reduce((s,p)=>s+(+p.pl||0),0), nb:ps.length};
+  return {cad:ps.reduce((s,p)=>s+parcelleCad(p),0), pl:ps.reduce((s,p)=>s+parcellePl(p),0), nb:ps.length};
+}
+let _parcOpen=new Set();
+function parcellePl(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.pl||0),0)*100)/100; return +p.pl||0; }
+function parcelleCad(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.cad||0),0)*100)/100; return +p.cad||0; }
+function recalcParcelle(p){ if(p.sub&&p.sub.length){ p.pl=parcellePl(p); p.cad=parcelleCad(p); } }
+function toggleParcDetail(key){ if(_parcOpen.has(key))_parcOpen.delete(key); else _parcOpen.add(key); renderParcelles(); }
+function toggleSub(key,i,checked){ const p=parcelles.find(x=>x.key===key); if(!p||!p.sub)return; p.sub[i].actif=checked; recalcParcelle(p); saveDB(); renderParcelles(); }
+function toggleParcActif(key,checked){ const p=parcelles.find(x=>x.key===key); if(!p)return; p.actif=checked; saveDB(); renderParcelles(); }
+function parcDetailHTML(p){
+  const subs=(p.sub&&p.sub.length)?p.sub:[{com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:p.cad,pl:p.pl,actif:p.actif!==false,_self:true}];
+  return `<div style="padding:9px 16px"><div style="font-size:11.5px;color:var(--mute);margin-bottom:6px">D\u00e9tail cadastral \u2014 d\u00e9cochez une parcelle arrach\u00e9e pour la sortir de la surface \u00e0 travailler.</div>`
+    +`<table style="width:100%;font-size:12px"><thead><tr><th style="width:28px"></th><th>Commune</th><th>Lieu-dit</th><th>R\u00e9f. cad.</th><th>C\u00e9page</th><th style="text-align:right">Surface (a)</th></tr></thead><tbody>`
+    +subs.map((x,i)=>{const on=x.actif!==false; const cb=x._self?`toggleParcActif('${p.key}',this.checked)`:`toggleSub('${p.key}',${i},this.checked)`; return `<tr style="${on?'':'opacity:.5'}"><td><input type="checkbox" ${on?'checked':''} onchange="${cb}"></td><td>${esc(x.com||'')}</td><td>${esc(x.ld||'')}</td><td style="font-size:11px;color:var(--mute)">${esc(x.ref||'')}</td><td>${esc(x.cep||'')}</td><td class="mono" style="text-align:right">${fmtS(x.pl)}${on?'':' <span style="color:var(--lie)">arrach\u00e9e</span>'}</td></tr>`;}).join('')
+    +`</tbody></table></div>`;
+}
+function mergeSelectedParcelles(){
+  const keys=Array.from(document.querySelectorAll('.parcSel:checked')).map(cb=>cb.value);
+  if(keys.length<2){toast('Cochez au moins deux parcelles \u00e0 fusionner.');return;}
+  const sel=keys.map(k=>parcelles.find(p=>p.key===k)).filter(Boolean);
+  const sub=[]; sel.forEach(p=>{ if(p.sub&&p.sub.length) p.sub.forEach(x=>sub.push({...x})); else sub.push({com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:+p.cad||0,pl:+p.pl||0,actif:p.actif!==false}); });
+  const base=sel[0];
+  const merged={key:'p'+Date.now()+'_m',id:base.id,com:base.com,ld:base.ld,cep:base.cep,ref:base.ref,sub};
+  recalcParcelle(merged);
+  const keySet=new Set(keys);
+  Object.keys(ilot_parcelles).forEach(n=>{ const arr=ilot_parcelles[n]||[]; if(arr.some(k=>keySet.has(k))) ilot_parcelles[n]=Array.from(new Set(arr.map(k=>keySet.has(k)?merged.key:k))); });
+  parcelles=parcelles.filter(p=>!keySet.has(p.key)); parcelles.push(merged);
+  _parcOpen.add(merged.key);
+  saveDB(); renderParcelles(); toast(sub.length+' parcelles cadastrales fusionn\u00e9es.');
 }
 function calcIFT(doseAppli,doseHom,ratio){
   const da=parseFloat(String(doseAppli).replace(',','.')), dh=parseFloat(String(doseHom).replace(',','.'));
@@ -612,7 +698,7 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 /* ===================== DASHBOARD ===================== */
 function renderDash(){
-  const totalPl=parcelles.reduce((s,p)=>s+(+p.pl||0),0)/100; /* ares→ha */
+  const totalPl=parcelles.reduce((s,p)=>s+parcellePl(p),0)/100; /* ares→ha */
   const ex=iftExploit(); const exTot=ex.h+ex.hh;
   const nbPass=passages.length;
   let recent=[...passages].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,6);
@@ -645,8 +731,8 @@ function emptyState(t,s){return`<div class="empty"><svg viewBox="0 0 24 24" fill
 let clientsCache=[];
 function iftFromPayload(d){
   const parc=d.parcelles||[], pass=d.passages||[], ip=d.ilot_parcelles||{}; recalcIFTs(pass);
-  function plIlot(nom){const keys=ip[nom]||[];return parc.filter(p=>keys.includes(p.key)).reduce((s,p)=>s+(+p.pl||0),0);}
-  const St=parc.reduce((s,p)=>s+(+p.pl||0),0); let a={h:0,hh:0,bio:0};
+  function plIlot(nom){const keys=ip[nom]||[];return parc.filter(p=>keys.includes(p.key)).reduce((s,p)=>s+parcellePl(p),0);}
+  const St=parc.reduce((s,p)=>s+parcellePl(p),0); let a={h:0,hh:0,bio:0};
   pass.forEach(pa=>{
     if(pa.fd)return; const sPl=plIlot(pa.ilot)||pa.sPl;
     const w=(St>0 && sPl>0)?sPl/St:1;
@@ -751,7 +837,13 @@ async function returnToOwn(){
 
 /* ===================== SAISIE PASSAGE ===================== */
 let panier=[], curProd=null;
+let selIlots=[];
+function curIlots(){ return Array.from(document.querySelectorAll('#sIlotBox input[type=checkbox]:checked')).map(cb=>cb.value); }
+function curIlot(){ return curIlots()[0]||''; }
+function toggleIlot(cb){ majInstrument(); renderPanier(); }
+function syncIlotChecks(list){ document.querySelectorAll('#sIlotBox input[type=checkbox]').forEach(cb=>{ cb.checked=(list||[]).includes(cb.value); }); }
 function renderSaisie(){
+  selIlots=[];
   if(!ilots.length){
     document.getElementById('pg-saisie').innerHTML=`
      <div class="ph"><div><div class="eyebrow">Nouveau traitement</div><h2>Saisir un passage</h2></div></div>
@@ -764,12 +856,12 @@ function renderSaisie(){
   document.getElementById('pg-saisie').innerHTML=`
   <div class="ph"><div><div class="eyebrow">Nouveau traitement</div><h2>Saisir un passage</h2>
     <div class="sub">Sélectionnez l'îlot et composez la bouillie depuis la base e-phy.</div></div><button class="btn btn-o" onclick="materielTRD()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>Matériel anti-dérive</button></div>
-  <div class="grid" style="grid-template-columns:1.15fr .85fr;align-items:start;gap:18px">
+  <div class="saisieGrid">
     <div class="card pad">
       <div class="row"><div class="field"><label>Date</label><input type="date" id="sDate" value="${new Date().toISOString().slice(0,10)}"></div>
         <div class="field"><label>Stade phénologique (BBCH)</label><select id="sStade" onchange="renderPanier()">
           <option value="">— choisir —</option>${BBCH.map(b=>`<option value="${b[0]}">${esc(b[1])}</option>`).join('')}</select></div></div>
-      <div class="row"><div class="field"><label>Îlot traité</label><select id="sIlot" onchange="majInstrument()">${ilotOpts}</select></div>
+      <div class="row"><div class="field"><label>Îlot(s) traité(s)</label><div id="sIlotBox" class="ilotPick">${ilots.map(i=>`<label><input type="checkbox" value="${esc(i.nom)}" onchange="toggleIlot(this)"><span>${esc(i.nom)} <span style="color:var(--mute);font-size:12px">(${fmt(ilotSurfaces(i.nom).pl/100,2)} ha)</span></span></label>`).join('')}</div></div>
         <div class="field"><label>Pluviométrie (mm)</label><input id="sPluvio" type="number" min="0" placeholder="0"></div></div>
       <div style="border-top:1px solid var(--line);margin:12px 0 16px"></div>
       <div class="field ac"><label>Produit (${EPHY.length} spécialités autorisées)</label>
@@ -793,7 +885,7 @@ function renderSaisie(){
 function majInstrumentHL(){
   const dose=document.getElementById('hl_dose')?.value||'';
   const doseHom=document.getElementById('hl_dosehom')?.value||'';
-  const ilot=document.getElementById('sIlot')?.value;
+  const ilot=curIlot();
   const ratio=ilot?ratioIlot(ilot):1;
   if(dose&&doseHom){
     const ift=calcIFT(dose,doseHom,ratio);
@@ -810,7 +902,7 @@ function ajouterHorsListe(mode){
   const nom=g('hl_nom');
   if(!nom){toast('Indiquez le nom du produit.');return;}
   if(panier.length>=5){toast('5 produits maximum par passage.');return;}
-  const ilot=document.getElementById('sIlot').value, ratio=ratioIlot(ilot);
+  const ilot=curIlot(), ratio=ratioIlot(ilot);
   const isMFSC=mode==='mfsc';
   if(isMFSC){
     panier.push({n:nom,sa:g('hl_sa'),f:'MFSC/Engrais foliaire',h:'',cmr:'NON',
@@ -897,12 +989,13 @@ function doseHaEff(){
   const raw=parseFloat(String(document.getElementById('sDose')?.value||'').replace(',','.'));
   if(!(raw>0))return null;
   const mode=document.getElementById('sDoseMode')?.value||'ha';
-  if(mode==='tot'){ const il=document.getElementById('sIlot')?.value; const ha=(il?ilotSurfaces(il).pl:0)/100; return ha>0?raw/ha:null; }
+  if(mode==='tot'){ const ha=curIlots().reduce((a,n)=>a+ilotSurfaces(n).pl,0)/100; return ha>0?raw/ha:null; }
   return raw;
 }
 function majInstrument(){
-  const ilot=document.getElementById('sIlot')?.value;
-  const ratio=ilot?ratioIlot(ilot):1;
+  const _ils=curIlots(); const ilot=_ils[0]||'';
+  const _s=_ils.reduce((a,n)=>{const v=ilotSurfaces(n);return {cad:a.cad+v.cad,pl:a.pl+v.pl,nb:a.nb+v.nb};},{cad:0,pl:0,nb:0});
+  const ratio=_s.cad>0?_s.pl/_s.cad:1;
   const u=curUsage(), dose=document.getElementById('sDose')?.value;
   const mode=document.getElementById('sDoseMode')?.value||'ha';
   const doseHa=doseHaEff();
@@ -913,7 +1006,7 @@ function majInstrument(){
   const refDose=ref?ref.d:(u?u.d:null);
   const iftBrut=(u&&refDose)?calcIFT(doseHa,refDose,ratio):null;
   const ift=compte?iftBrut:null;
-  const s=ilot?ilotSurfaces(ilot):{cad:0,pl:0,nb:0};
+  const s=_s;
   const dr=(u&&doseHa&&refDose)?(doseHa/parseFloat(refDose)):null;
   const surd=u&&estSurdosage(doseHa,u.d);
   const note=fd?'<span style="color:var(--laiton-soft)">Lutte FD obligatoire — hors IFT</span>':
@@ -926,7 +1019,7 @@ function majInstrument(){
     ${ref?`<div style="font-size:11.5px;color:var(--mute);margin-top:4px">Dose de référence IFT : <b>${refDose==null?'—':fmt(refDose,3)} ${esc(ref.u||'')}</b> — ${ref.src==='off'?`<span style="color:var(--vigne);font-weight:600">référentiel officiel 2026${ref.c?' · '+esc(ref.c):''}</span>`:'dose homologuée <span style=\'color:var(--laiton)\'>(hors référentiel)</span>'}</div>`:''}
     ${surd?`<div style="margin-top:12px;background:rgba(138,45,59,.35);border:1px solid var(--lie-soft);border-radius:7px;padding:8px 11px;font-size:12.5px;font-weight:600">⚠ Surdosage : dose appliquée (${doseHa==null?'—':fmt(doseHa,3)} ${esc(u.un||'')}/ha) supérieure à la dose homologuée (${esc(u.d)} ${esc(u.un||'')})</div>`:''}
     <div class="ift-factor">
-      <div>Îlot<b>${esc(ilot||'—')}</b></div>
+      <div>Îlot(s)<b>${_ils.length?_ils.map(esc).join(' + '):'—'}</b></div>
       <div>S. plantée<b class="mono">${fmtS(s.pl)} a</b></div>
       <div>S. cadastrale<b class="mono">${fmtS(s.cad)} a</b></div>
       <div>Parcelles<b class="mono">${s.nb}</b></div>
@@ -937,7 +1030,7 @@ function ajouterAuPanier(){
   const dose=document.getElementById('sDose').value;
   if(!dose){toast('Indiquez la dose appliquée.');return;}
   if(panier.length>=5){toast('5 produits maximum par passage.');return;}
-  const ilot=document.getElementById('sIlot').value, ratio=ratioIlot(ilot);
+  const ilot=curIlot(), ratio=ratioIlot(ilot);
   const type=document.getElementById('sType').value;
   const u=curUsage();
   const isMFSC=curProd.type==='mfsc'||!u;
@@ -1001,7 +1094,7 @@ function renderPanier(){
   if(surdos.length)html+=`<div class="alert danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div><b>Surdosage</b><br>${surdos.map(p=>`${esc(p.n)} : ${esc(p.doseAppli)} > dose homologuée ${esc(p.doseHom)} ${esc(p.unite||'')}`).join('<br>')}</div></div>`;
   if(probs.length)html+=`<div class="alert danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div><b>Mélange réglementairement interdit</b><br>${probs.map(c=>esc(c.t)).join('<br>')}<br><span style="font-size:11px;opacity:.8">Arrêté du 7 avril 2010 modifié le 12 juin 2015</span></div></div>`;
   if(!surdos.length&&!probs.length&&panier.length>=2)html+=`<div class="alert info"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg><div>Aucune interdiction de mélange détectée${stade?'':' — pensez à renseigner le stade pour la règle floraison'}.</div></div>`;
-  const _ilSel=document.getElementById('sIlot')?.value; const _il=ilots.find(i=>i.nom===_ilSel);
+  const _ilSel=curIlot(); const _il=ilots.find(i=>i.nom===_ilSel);
   if(_il&&_il.dsppr&&panier.length){
     const _red=trdZntMin();
     let maxEff=0,pMax='',baseMax=0,reduced=false,inc=false;
@@ -1014,23 +1107,29 @@ function renderPanier(){
 }
 function enregistrerPassage(){
   if(!panier.length){toast('La bouillie est vide.');return;}
-  const ilot=document.getElementById('sIlot').value;
+  const ilist=curIlots(); if(!ilist.length){toast('Sélectionnez au moins un îlot.');return;}
+  if(!document.getElementById('sDate').value){toast('Indiquez la date du passage.');return;}
   const stadeCode=document.getElementById('sStade').value;
+  if(!stadeCode){toast('Sélectionnez le stade phénologique.');return;}
   const fd=false;
   const probs=analyseMelange(panier,stadeCode);
   const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
   const avert=[...surdos.map(p=>'Surdosage : '+p.n+' ('+p.doseAppli+' > '+p.doseHom+' '+(p.unite||'')+')'),...probs.map(p=>p.t)];
   if(avert.length && !confirm('Avertissements sur ce passage :\n\n'+avert.map(a=>'• '+a).join('\n')+'\n\nEnregistrer tout de même (pour traçabilité) ?'))return;
-  passages.push({id:'P'+Date.now(),date:document.getElementById('sDate').value,
-    stade:stadeCode,stadeLbl:(BBCH.find(b=>b[0]===stadeCode)||['',''])[1],
-    ilot,fd,pluvio:document.getElementById('sPluvio').value,
+  const _date=document.getElementById('sDate').value, _pluvio=document.getElementById('sPluvio').value;
+  const _stadeLbl=(BBCH.find(b=>b[0]===stadeCode)||['',''])[1];
+  ilist.forEach((ilot,_k)=>{ const _ilHa=ilotSurfaces(ilot).pl/100;
+    passages.push({id:'P'+Date.now()+'_'+_k,date:_date,
+    stade:stadeCode,stadeLbl:_stadeLbl,
+    ilot,fd,pluvio:_pluvio,
     ratio:ratioIlot(ilot),sPl:ilotSurfaces(ilot).pl,
-    produits:panier.map(p=>({...p,ift:produitCompteIFT(p,fd)?p.iftBrut:null}))});
+    produits:panier.map(p=>{const _q=(p.doseMode==='tot')?Math.round(p.doseAppli*_ilHa*100)/100:p.qteTot; return {...p,qteTot:_q,ift:produitCompteIFT(p,fd)?p.iftBrut:null};})}); });
+  selIlots=[];
   saveDB();toast('Passage enregistré ✓ — stock décompté automatiquement');go('bilan');
 }
 
 /* ===================== BILAN ===================== */
-function sTotExploit(){return parcelles.reduce((s,p)=>s+(+p.pl||0),0);} /* en ares */
+function sTotExploit(){return parcelles.reduce((s,p)=>s+parcellePl(p),0);} /* en ares */
 function iftExploit(){
   const St=sTotExploit(); let a={h:0,hh:0,bio:0};
   passages.forEach(pa=>{
@@ -1166,7 +1265,7 @@ function editPassage(id){
     // en-tête
     const sDate=document.getElementById('sDate'); if(sDate)sDate.value=pa.date||'';
     const sStade=document.getElementById('sStade'); if(sStade)sStade.value=pa.stade||'';
-    const sIlot=document.getElementById('sIlot'); if(sIlot)sIlot.value=pa.ilot||'';
+    syncIlotChecks(pa.ilot?[pa.ilot]:[]);
     const sPluvio=document.getElementById('sPluvio'); if(sPluvio)sPluvio.value=pa.pluvio||'';
     // panier
     panier=pa.produits.map(p=>({...p}));
@@ -1185,21 +1284,26 @@ function editPassage(id){
 function updatePassage(){
   if(!panier.length){toast('La bouillie est vide.');return;}
   const idx=passages.findIndex(p=>p.id===_editingId); if(idx<0)return;
-  const ilot=document.getElementById('sIlot').value;
+  const ilist=curIlots(); if(!ilist.length){toast('Sélectionnez au moins un îlot.');return;}
+  if(!document.getElementById('sDate').value){toast('Indiquez la date du passage.');return;}
   const stadeCode=document.getElementById('sStade').value;
+  if(!stadeCode){toast('Sélectionnez le stade phénologique.');return;}
   const fd=false;
   const probs=analyseMelange(panier,stadeCode);
   const surdos=panier.filter(p=>estSurdosage(p.doseAppli,p.doseHom));
   const avert=[...surdos.map(p=>'Surdosage : '+p.n),...probs.map(p=>p.t)];
   if(avert.length && !confirm('Avertissements :\n\n'+avert.map(a=>'• '+a).join('\n')+'\n\nEnregistrer tout de même ?'))return;
-  passages[idx]={...passages[idx],
-    date:document.getElementById('sDate').value,
-    stade:stadeCode, stadeLbl:(BBCH.find(b=>b[0]===stadeCode)||['',''])[1],
-    ilot, fd, pluvio:document.getElementById('sPluvio').value,
-    ratio:ratioIlot(ilot), sPl:ilotSurfaces(ilot).pl,
-    produits:panier.map(p=>({...p,ift:produitCompteIFT(p,fd)?p.iftBrut:null}))
-  };
-  _editingId=null; saveDB(); toast('Passage mis à jour ✓'); go('bilan');
+  const _date=document.getElementById('sDate').value, _pluvio=document.getElementById('sPluvio').value;
+  const _stadeLbl=(BBCH.find(b=>b[0]===stadeCode)||['',''])[1];
+  const _base=passages[idx];
+  const _news=ilist.map((ilot,_k)=>{ const _ilHa=ilotSurfaces(ilot).pl/100;
+    return {..._base, id:(_k===0?_base.id:'P'+Date.now()+'_'+_k),
+      date:_date, stade:stadeCode, stadeLbl:_stadeLbl,
+      ilot, fd, pluvio:_pluvio, ratio:ratioIlot(ilot), sPl:ilotSurfaces(ilot).pl,
+      produits:panier.map(p=>{const _q=(p.doseMode==='tot')?Math.round(p.doseAppli*_ilHa*100)/100:p.qteTot; return {...p,qteTot:_q,ift:produitCompteIFT(p,fd)?p.iftBrut:null};})};
+  });
+  passages.splice(idx,1,..._news);
+  _editingId=null; saveDB(); toast(_news.length>1?(_news.length+' passages enregistrés ✓'):'Passage mis à jour ✓'); go('bilan');
 }
 
 /* ===================== PARCELLES ===================== */
@@ -1216,10 +1320,10 @@ function cepageNorm(c){
   return v||'—';
 }
 function renderParcelles(){
-  const totCad=parcelles.reduce((s,p)=>s+(+p.cad||0),0);
-  const totPl =parcelles.reduce((s,p)=>s+(+p.pl ||0),0);
+  const totCad=parcelles.reduce((s,p)=>s+parcelleCad(p),0);
+  const totPl =parcelles.reduce((s,p)=>s+parcellePl(p),0);
   const cepStats={};
-  parcelles.forEach(p=>{const c=cepageNorm(p.cep);if(!cepStats[c])cepStats[c]={pl:0,nb:0};cepStats[c].pl+=(+p.pl||0);cepStats[c].nb++;});
+  parcelles.forEach(p=>{const c=cepageNorm(p.cep);if(!cepStats[c])cepStats[c]={pl:0,nb:0};cepStats[c].pl+=parcellePl(p);cepStats[c].nb++;});
   const cepArr=Object.entries(cepStats).sort((a,b)=>b[1].pl-a[1].pl);
   const totCep=cepArr.reduce((s,e)=>s+e[1].pl,0)||1;
   const encCard=cepArr.length?`<div class="card pad" style="margin-top:16px"><div class="card-h">État de l'encépagement</div>${cepArr.map(e=>{const c=e[0],v=e[1],pct=v.pl/totCep*100;return `<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span><b>${esc(c)}</b> <span style="color:var(--mute)">· ${v.nb} parcelle${v.nb>1?'s':''}</span></span><span class="mono">${fmtS(v.pl)} a · ${fmt(pct,1)} %</span></div><div style="height:8px;background:var(--craie);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:var(--vigne)"></div></div></div>`;}).join('')}</div>`:'';
@@ -1228,16 +1332,18 @@ function renderParcelles(){
      <div class="sub">${parcelles.length} parcelles · ${fmtS(totPl)} a plantés / ${fmtS(totCad)} a cadastraux (${fmt(totPl/100,2)} ha)</div></div>
      <div style="display:flex;gap:8px;flex-wrap:wrap">
        <button class="btn btn-o" onclick="importFicheVendange()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>Importer (PDF Fiche Vendange)</button>
-       <button class="btn btn-o" onclick="teneursModal()">Teneurs Cu / Folpel</button><button class="btn btn-g" onclick="editParcelle()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une parcelle</button></div></div>
-   <div style="background:var(--vigne-soft);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--vigne2);margin-bottom:10px">Cumuls de la campagne. Plafond <b>cuivre : 4 kg/ha/an</b> (28 kg/ha sur 7 ans, en cuivre métal). Cuivre estimé d'après e-phy &mdash; vérifiez via « Teneurs Cu / Folpel ».</div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale (a)</th><th>S. plantée (a)</th><th>Cuivre kg/ha</th><th>Folpel kg/ha</th><th></th></tr></thead><tbody>
+       <button class="btn btn-o" onclick="teneursModal()">Teneurs Cu / Folpel</button><button class="btn btn-g" onclick="editParcelle()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une parcelle</button><button class="btn btn-o" onclick="mergeSelectedParcelles()" title="Cochez des parcelles puis fusionnez-les en une seule">Fusionner la sélection</button></div></div>
+   <div style="background:var(--vigne-soft);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--vigne2);margin-bottom:10px">Cumuls de la campagne. Plafond <b>cuivre : 4 kg/ha/an</b> (28 kg/ha sur 7 ans, en cuivre métal). Cuivre estimé d'après e-phy &mdash; vérifiez via « Teneurs Cu / Folpel ».</div><div class="card"><div class="tbl-wrap"><table><thead><tr><th></th><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale (a)</th><th>S. plantée (a)</th><th>Cuivre kg/ha</th><th>Folpel kg/ha</th><th></th></tr></thead><tbody>
    ${triParcelles(parcelles).map(p=>{
      const inIlots=Object.entries(ilot_parcelles).filter(([n,ks])=>ks.includes(p.key)).map(([n])=>n);
      const cm=cumulParcelle(p.key);
-     return`<tr>
-     <td><b>${esc(p.id)}</b></td><td>${esc(p.com)}</td><td>${esc(p.ld||'')}</td><td>${esc(p.cep||'')}</td>
-     <td class="mono">${fmtS(p.cad)}</td><td class="mono">${fmtS(p.pl)}</td><td class="mono" style="${cm.cu>4?'color:var(--lie);font-weight:700':cm.cu>3?'color:var(--laiton);font-weight:600':''}">${cm.cu>0?fmt(cm.cu,2):'—'}</td><td class="mono">${cm.fp>0?fmt(cm.fp,2):'—'}</td>
-     <td><div style="font-size:11.5px;color:var(--mute)">${inIlots.length?inIlots.map(n=>`<span class="tag-pill" style="font-size:10px">${esc(n)}</span>`).join(' '):'<span style="color:var(--lie)">Aucun îlot</span>'}</div>
-       <button class="iconbtn" onclick="editParcelle('${p.key}')" title="Modifier"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button><button class="iconbtn" onclick="supprParcelle('${p.key}')" title="Supprimer" style="color:var(--lie)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button></td></tr>`;}).join('')}
+     const _open=_parcOpen.has(p.key);
+     return`<tr style="cursor:pointer" onclick="toggleParcDetail('${p.key}')">
+     <td onclick="event.stopPropagation()"><input type="checkbox" class="parcSel" value="${esc(p.key)}"></td>
+     <td><b>${esc(p.id)}</b> <span style="color:var(--mute);font-size:10px">${_open?'▾':'▸'}</span></td><td>${esc(p.com)}</td><td>${esc(p.ld||'')}</td><td>${esc(p.cep||'')}</td>
+     <td class="mono">${fmtS(parcelleCad(p))}</td><td class="mono">${fmtS(parcellePl(p))}</td><td class="mono" style="${cm.cu>4?'color:var(--lie);font-weight:700':cm.cu>3?'color:var(--laiton);font-weight:600':''}">${cm.cu>0?fmt(cm.cu,2):'—'}</td><td class="mono">${cm.fp>0?fmt(cm.fp,2):'—'}</td>
+     <td onclick="event.stopPropagation()"><div style="font-size:11.5px;color:var(--mute)">${inIlots.length?inIlots.map(n=>`<span class="tag-pill" style="font-size:10px">${esc(n)}</span>`).join(' '):'<span style="color:var(--lie)">Aucun îlot</span>'}</div>
+       <button class="iconbtn" onclick="editParcelle('${p.key}')" title="Modifier"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button><button class="iconbtn" onclick="supprParcelle('${p.key}')" title="Supprimer" style="color:var(--lie)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button></td></tr>${_open?`<tr><td colspan="10" style="background:var(--craie);padding:0">${parcDetailHTML(p)}</td></tr>`:''}`;}).join('')}
    </tbody></table></div></div>${encCard}`;
 }
 /* ---- Import parcellaire depuis PDF Fiche Vendange CIVC ---- */
@@ -1263,7 +1369,20 @@ async function lireFichePDF(buf){
   return parseFicheVendange(pages);
 }
 function parseFicheVendange(pages){
-  const B={com:[105,168],ld:[185,302],ref:[300,362],surf:[363,435],cep:[438,515]};
+  const B0={com:[105,168],ld:[185,302],ref:[300,362],surf:[363,435],cep:[438,515]};
+  /* Calage horizontal : on rep\u00e8re la colonne \u00ab Commune \u00bb de l'en-t\u00eate (m\u00eame ligne que \u00ab Lieu-dit \u00bb)
+     et on d\u00e9cale toutes les bandes en cons\u00e9quence, pour les fiches dont la mise en page diff\u00e8re. */
+  let off=0;
+  try{
+    const all=[]; pages.forEach(items=>items.forEach(it=>all.push(it)));
+    const comH=all.filter(t=>/^commune$/i.test(String(t.str).trim()));
+    for(const c of comH){
+      const sameRow=all.filter(t=>Math.abs(t.y-c.y)<=3);
+      if(sameRow.some(t=>/lieu/i.test(t.str)) && c.x>95){ off=c.x-113; break; }
+    }
+  }catch(e){}
+  const _sh=b=>[b[0]+off,b[1]+off];
+  const B={com:_sh(B0.com),ld:_sh(B0.ld),ref:_sh(B0.ref),surf:_sh(B0.surf),cep:_sh(B0.cep)};
   const inB=(x,b)=>x>=b[0]&&x<b[1];
   const REFRE=/\d{0,3}[A-Z]{1,2}\d{2,4}[A-Z]?/;
   const hasA=s=>/[A-Za-zÀ-ÿ]/.test(s);
@@ -1391,7 +1510,7 @@ function saveParcelle(key){
     const used=new Set(parcelles.filter(p=>!key||p.key!==key).map(p=>p.id));
     o.id=prochainCodeCommune(o.com,used);
   }
-  if(key){Object.assign(parcelles.find(x=>x.key===key),o);}
+  if(key){const _p=parcelles.find(x=>x.key===key); Object.assign(_p,o); if(_p.sub&&_p.sub.length)recalcParcelle(_p);}
   else{o.key='p'+Date.now();parcelles.push(o);}
   saveDB();closeModal();renderParcelles();toast('Parcelle enregistrée');
 }
@@ -1498,6 +1617,8 @@ function renderIlots(){
      }).join('');
      const cepListIlot=[...new Set(parcelles.map(p=>cepageNorm(p.cep)))].filter(c=>c&&c!=='—').sort();
      const cepChips=cepListIlot.map(c=>{const cnt=parcelles.filter(p=>cepageNorm(p.cep)===c).length;const inN=parcelles.filter(p=>cepageNorm(p.cep)===c&&keys.includes(p.key)).length;const all=cnt>0&&inN===cnt;return `<button type="button" onclick="toggleCepageIlot('${il.nom}','${c}')" class="tag-pill ${all?'laiton':'mute'}" style="cursor:pointer;border:none;font-size:11px">${all?'✓ ':''}${esc(c)} (${cnt})</button>`;}).join(' ');
+     const comListIlot=[...new Set(parcelles.map(p=>(p.com||'').trim()))].filter(Boolean).sort();
+     const comChips=comListIlot.map(c=>{const cnt=parcelles.filter(p=>(p.com||'').trim()===c).length;const inN=parcelles.filter(p=>(p.com||'').trim()===c&&keys.includes(p.key)).length;const all=cnt>0&&inN===cnt;return `<button type="button" onclick="toggleCommuneIlot('${il.nom}','${c}')" class="tag-pill ${all?'laiton':'mute'}" style="cursor:pointer;border:none;font-size:11px">${all?'✓ ':''}${esc(c)} (${cnt})</button>`;}).join(' ');
      return`<div class="card pad" data-ilot="${esc(il.nom)}">
        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
          <div><div style="font-family:var(--display);font-size:18px;font-weight:600;color:var(--vigne)">${esc(il.nom)}</div>
@@ -1509,7 +1630,7 @@ function renderIlots(){
          <span>${s.nb} parcelle${s.nb>1?'s':''}</span>
          <span>plantée <b class="mono" style="color:var(--ink)">${fmtS(s.pl)}</b> a (${fmt(s.pl/100,2)} ha)</span>
          <span>cadastrale <b class="mono" style="color:var(--ink)">${fmtS(s.cad)}</b> a</span></div>
-       ${cepChips?`<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">${cepChips}</div>`:''}<div style="border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;max-height:220px;overflow-y:auto">
+       ${comChips?`<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:6px"><span style="font-size:10.5px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;margin-right:2px">Commune</span>${comChips}</div>`:''}       ${cepChips?`<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:8px"><span style="font-size:10.5px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;margin-right:2px">Cépage</span>${cepChips}</div>`:''}<div style="border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;max-height:220px;overflow-y:auto">
          ${parcelles.length?(master+parcList):'<div style=\"padding:12px;color:var(--mute);font-size:12px\">Aucune parcelle — créez-en dans l\'onglet Parcellaire.</div>'}
        </div>
        <div style="margin-top:10px;display:flex;gap:6px">
@@ -1526,6 +1647,14 @@ function toggleTousParcIlot(nomIlot,checked){
 function toggleCepageIlot(nomIlot,cep){
   if(!ilot_parcelles[nomIlot])ilot_parcelles[nomIlot]=[];
   const ks=parcelles.filter(p=>cepageNorm(p.cep)===cep).map(p=>p.key);
+  const allIn=ks.length>0&&ks.every(k=>ilot_parcelles[nomIlot].includes(k));
+  if(allIn)ilot_parcelles[nomIlot]=ilot_parcelles[nomIlot].filter(k=>!ks.includes(k));
+  else ks.forEach(k=>{if(!ilot_parcelles[nomIlot].includes(k))ilot_parcelles[nomIlot].push(k);});
+  saveDB();renderIlots();
+}
+function toggleCommuneIlot(nomIlot,com){
+  if(!ilot_parcelles[nomIlot])ilot_parcelles[nomIlot]=[];
+  const ks=parcelles.filter(p=>(p.com||'').trim()===com).map(p=>p.key);
   const allIn=ks.length>0&&ks.every(k=>ilot_parcelles[nomIlot].includes(k));
   if(allIn)ilot_parcelles[nomIlot]=ilot_parcelles[nomIlot].filter(k=>!ks.includes(k));
   else ks.forEach(k=>{if(!ilot_parcelles[nomIlot].includes(k))ilot_parcelles[nomIlot].push(k);});
@@ -2133,11 +2262,11 @@ function renderTravaux(){
   sorted.forEach(t=>{ const k=(t.date||'').slice(0,7)||'0'; (groups[k]=groups[k]||[]).push(t); });
   const gh=Object.keys(groups).sort((a,b)=>b.localeCompare(a)).map(k=>{
     const [y,m]=k.split('-'); const titre=m?(MOIS[+m-1]+' '+y):'Sans date';
-    const rows=groups[k].map(t=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)">
+    const rows=groups[k].map(t=>`<div onclick="editTravail('${t.id}')" title="Cliquer pour modifier" style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
       <div style="width:40px;text-align:center;flex:none"><div style="font-family:var(--display);font-size:18px;color:var(--vigne);font-weight:600">${(t.date||'').slice(8,10)||'–'}</div></div>
       <div style="flex:1"><div style="font-weight:600">${esc(t.type)} <span class="tag-pill ${t.mode==='Mécanique'?'laiton':(t.mode==='Mixte'?'':'mute')}" style="font-size:10px">${esc(t.mode||'')}</span></div>
         <div style="font-size:12px;color:var(--mute)">${t.ilot?esc(t.ilot):'Toute l\'exploitation'}${t.heures?' · '+esc(t.heures)+' h':''}${t.comment?' · '+esc(t.comment):''}</div></div>
-      <button class="iconbtn btn-danger" onclick="supprTravail('${t.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`).join('');
+      <button class="iconbtn btn-danger" onclick="event.stopPropagation();supprTravail('${t.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`).join('');
     return `<div class="card pad" style="margin-bottom:14px"><div style="font-family:var(--display);font-size:15px;color:var(--vigne);text-transform:capitalize;margin-bottom:2px">${titre} <span style="font-size:12px;color:var(--mute);font-weight:400">· ${groups[k].length} intervention${groups[k].length>1?'s':''}</span></div>${rows}</div>`;
   }).join('');
   el.innerHTML=`<div class="ph"><div><div class="eyebrow">Suivi</div><h2>Calendrier des travaux</h2>
@@ -2146,27 +2275,45 @@ function renderTravaux(){
     <button class="btn btn-g" onclick="ouvrirTravail()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Nouvelle intervention</button></div></div>
     ${travaux.length?gh:'<div class="card pad" style="color:var(--mute)">Aucune intervention enregistrée. Cliquez « Nouvelle intervention » pour démarrer le journal.</div>'}`;
 }
-function ouvrirTravail(){
+let _editTravail=null;
+function editTravail(id){ ouvrirTravail(id); }
+function ouvrirTravail(id){
+  const t=id?travaux.find(x=>x.id===id):null; _editTravail=t?id:null;
   const types=typesTravaux();
   const ilopts=['<option value="">Toute l\'exploitation</option>'].concat(ilots.map(i=>`<option>${esc(i.nom)}</option>`)).join('');
-  openModal('Nouvelle intervention',`
+  openModal(_editTravail?"Modifier l'intervention":'Nouvelle intervention',`
     <div class="row"><div class="field"><label>Date</label><input id="tv_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
       <div class="field"><label>Mode</label><select id="tv_mode"><option>Manuel</option><option>Mécanique</option><option>Mixte</option></select></div></div>
     <div class="field"><label>Type d'intervention</label>
-      <select id="tv_type" onchange="document.getElementById('tv_newwrap').style.display=this.value==='__new'?'block':'none'">
+      <select id="tv_type" onchange="document.getElementById('tv_newwrap').style.display=this.value==='__new'?'block':'none';tvTypeAuto()">
         ${types.map(t=>`<option>${esc(t)}</option>`).join('')}<option value="__new">➕ Nouveau type…</option></select></div>
     <div class="field" id="tv_newwrap" style="display:none"><label>Nouveau type d'intervention</label><input id="tv_new" placeholder="ex. Passage d'épampreuse"></div>
     <div class="row"><div class="field"><label>Îlot (facultatif)</label><select id="tv_ilot">${ilopts}</select></div>
-      <div class="field"><label>Durée en heures (facultatif)</label><input id="tv_h" type="number" step="0.5" min="0" placeholder="ex. 8"></div></div>
+      <div class="field"><label>Durée en heures</label><input id="tv_h" type="number" step="0.5" min="0" placeholder="ex. 8"></div></div>
     <div class="field"><label>Commentaire (facultatif)</label><input id="tv_comment" placeholder="ex. parcelle jeune, sol ressuyé"></div>
     <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveTravail()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Enregistrer l'intervention</button>`);
+  if(t){ const set=(i,v)=>{const e=document.getElementById(i); if(e)e.value=(v==null?'':v);};
+    set('tv_date',t.date); set('tv_mode',t.mode); set('tv_ilot',t.ilot); set('tv_h',t.heures); set('tv_comment',t.comment);
+    const ty=document.getElementById('tv_type'); if(ty&&[...ty.options].some(o=>o.value===t.type||o.text===t.type)) ty.value=t.type;
+  }
+}
+function tvTypeAuto(){
+  const ty=document.getElementById('tv_type'); if(!ty)return; const t=ty.value; if(!t||t==='__new')return;
+  const m=((meta.travaux_memo)||{})[t]; if(!m)return;
+  const setT=(i,v)=>{const e=document.getElementById(i); if(e)e.value=(v==null?'':v);};
+  setT('tv_mode',m.mode); setT('tv_h',m.heures); setT('tv_ilot',m.ilot);
 }
 function saveTravail(){
   const g=id=>document.getElementById(id).value;
+  if(!g('tv_date')){toast('Indiquez la date.');return;}
+  if(!(parseFloat(g('tv_h'))>0)){toast('Indiquez la durée en heures.');return;}
   let type=g('tv_type');
   if(type==='__new'){ type=g('tv_new').trim(); if(!type){toast('Indiquez le type d\'intervention.');return;}
     meta.travaux_types=[...((meta.travaux_types)||[]),type].filter((v,i,a)=>a.indexOf(v)===i); }
-  travaux.push({id:'T'+Date.now(),date:g('tv_date'),type,mode:g('tv_mode'),ilot:g('tv_ilot'),heures:g('tv_h'),comment:g('tv_comment').trim()});
+  const _rec={date:g('tv_date'),type,mode:g('tv_mode'),ilot:g('tv_ilot'),heures:g('tv_h'),comment:g('tv_comment').trim()};
+  if(_editTravail){const _t=travaux.find(x=>x.id===_editTravail); if(_t)Object.assign(_t,_rec); _editTravail=null;} else travaux.push({id:'T'+Date.now(),..._rec});
+  meta.travaux_memo=meta.travaux_memo||{};
+  meta.travaux_memo[type]={mode:_rec.mode,heures:_rec.heures,ilot:_rec.ilot};
   saveDB(); closeModal(); renderTravaux(); toast('Intervention enregistrée ✓');
 }
 function supprTravail(id){ if(confirm('Supprimer cette intervention ?')){travaux=travaux.filter(t=>t.id!==id);saveDB();renderTravaux();toast('Intervention supprimée');} }
@@ -2313,7 +2460,7 @@ function renderFumure(){
     ${bk.map(k=>`<tr><td><b>${esc(k)}</b></td><td class="mono">${fmt(bilan[k].n,0)}</td><td class="mono" style="color:var(--vigne);font-weight:600">${fmt(bilan[k].neff,0)}</td><td class="mono">${fmt(bilan[k].p,0)}</td><td class="mono">${fmt(bilan[k].k,0)}</td><td class="mono">${fmt(bilan[k].mgo,0)}</td><td class="mono">${bilan[k].nb}</td></tr>`).join('')}
     </tbody></table></div>
     <div style="font-size:11px;color:var(--mute);padding:8px 12px 0">N efficace = azote disponible = N apporté × coefficient K, K étant déterminé par le C/N de chaque apport.</div></div>`:'';
-  const liste=sorted.map(f=>{const ne=nEffApport(f);const k=keqApport(f);return `<tr>
+  const liste=sorted.map(f=>{const ne=nEffApport(f);const k=keqApport(f);return `<tr onclick="editFumure('${f.id}')" title="Cliquer pour modifier" style="cursor:pointer">
     <td class="mono">${esc(dateFR(f.date))}</td><td>${esc(f.ilot||'—')}</td>
     <td><b>${esc(f.produit||'—')}</b>${f.type?`<br><span class="tag-pill ${(f.type==='Amendement'||(f.type||'').indexOf('Orga')>=0)?'laiton':'mute'}" style="font-size:10px">${esc(f.type)}</span>`:''}</td>
     <td class="mono">${esc(f.dose||'')} ${esc(f.unite||'')}</td>
@@ -2321,7 +2468,7 @@ function renderFumure(){
     <td class="mono">${f.n?esc(f.n):'—'}</td><td class="mono" style="color:var(--vigne);font-weight:600">${ne===''?'—':fmt(ne,0)}</td>
     <td class="mono">${f.p?esc(f.p):'—'}</td><td class="mono">${f.k?esc(f.k):'—'}</td><td class="mono">${f.mgo?esc(f.mgo):'—'}</td>
     <td style="font-size:11.5px;color:var(--mute)">${esc(f.comment||'')}</td>
-    <td><button class="iconbtn btn-danger" onclick="supprFumure('${f.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></td></tr>`;}).join('');
+    <td><button class="iconbtn btn-danger" onclick="event.stopPropagation();supprFumure('${f.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></td></tr>`;}).join('');
   el.innerHTML=`<div class="ph"><div><div class="eyebrow">Suivi</div><h2>Plan de fumure</h2>
     <div class="sub">Apports, azote disponible (N efficace via C/N), bilan par îlot, export Excel et PDF.</div></div>
     <div class="row" style="flex:none;gap:8px"><button class="btn btn-o" onclick="fumurePDF()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>Export PDF</button>
@@ -2339,33 +2486,52 @@ function saveFumurePrev(){
     dose_plafond_n:g('fp_plaf'),type_engrais:g('fp_type')};
   saveDB(); toast('Contexte prévisionnel enregistré ✓');
 }
-function ouvrirFumure(){
+let _editFumure=null;
+function editFumure(id){ ouvrirFumure(id); }
+function ouvrirFumure(id){
+  const f=id?fumure.find(x=>x.id===id):null; _editFumure=f?id:null;
   const ilopts=['<option value="">(non affecté)</option>'].concat(ilots.map(i=>`<option>${esc(i.nom)}</option>`)).join('');
-  const mfsc=[...new Set(EPHY.filter(p=>p.type==='mfsc').map(p=>p.n))].slice(0,2000);
-  const dl=mfsc.map(n=>`<option value="${esc(n)}"></option>`).join('');
-  openModal('Nouvel apport de fumure',`
+  const memo=(meta.fumure_memo)||[];
+  const dl=memo.map(m=>`<option value="${esc(m.nom)}"></option>`).join('');
+  openModal(_editFumure?"Modifier l'apport":'Nouvel apport de fumure',`
     <div class="row"><div class="field"><label>Date</label><input id="fu_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
       <div class="field"><label>Îlot</label><select id="fu_ilot">${ilopts}</select></div></div>
-    <div class="row"><div class="field"><label>Produit / fertilisant</label><input id="fu_prod" list="fu_dl" placeholder="ex. ACTIVOR 5-2-7, Compost, 18-46-0…"><datalist id="fu_dl">${dl}</datalist></div>
+    <div class="row"><div class="field"><label>Produit / fertilisant</label><input id="fu_prod" list="fu_dl" onchange="fuProdAuto()" placeholder="ex. ACTIVOR 5-2-7, Compost, 18-46-0…"><datalist id="fu_dl">${dl}</datalist></div>
       <div class="field"><label>Type</label><select id="fu_type" onchange="fuHint()"><option>Organique</option><option>Eng. 100% Orga</option><option>Eng. Org-Min</option><option>Eng. Minéral</option><option>Minéral</option><option>Amendement</option><option>Foliaire</option></select></div></div>
     <div class="row"><div class="field"><label>Dose (Qté/Ha)</label><input id="fu_dose" type="number" step="0.01" min="0" placeholder="ex. 1.2"></div>
       <div class="field"><label>Unité</label><select id="fu_unite"><option>t/ha</option><option>kg/ha</option><option>L/ha</option><option>U/ha</option></select></div>
       <div class="field"><label>C/N de l'engrais</label><input id="fu_cn" type="number" step="0.5" min="0" placeholder="ex. 6" oninput="fuHint()"></div></div>
     <div style="font-size:11.5px;color:var(--mute);margin-bottom:6px">Unités fertilisantes apportées (kg/ha) — laissez vide si inconnu :</div>
-    <div class="row"><div class="field"><label>Azote N</label><input id="fu_n" type="number" step="0.1" min="0" placeholder="kg/ha" oninput="fuHint()"></div>
-      <div class="field"><label>P₂O₅</label><input id="fu_p" type="number" step="0.1" min="0" placeholder="kg/ha"></div>
-      <div class="field"><label>K₂O</label><input id="fu_k" type="number" step="0.1" min="0" placeholder="kg/ha"></div>
-      <div class="field"><label>MgO</label><input id="fu_mgo" type="number" step="0.1" min="0" placeholder="kg/ha"></div></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px"><div class="field" style="min-width:0"><label>N</label><input id="fu_n" type="number" step="0.1" min="0" placeholder="kg/ha" oninput="fuHint()" style="width:100%"></div><div class="field" style="min-width:0"><label>P₂O₅</label><input id="fu_p" type="number" step="0.1" min="0" placeholder="kg/ha" style="width:100%"></div><div class="field" style="min-width:0"><label>K₂O</label><input id="fu_k" type="number" step="0.1" min="0" placeholder="kg/ha" style="width:100%"></div><div class="field" style="min-width:0"><label>MgO</label><input id="fu_mgo" type="number" step="0.1" min="0" placeholder="kg/ha" style="width:100%"></div></div>
     <div id="fu_neff_hint" style="font-size:11.5px;color:var(--vigne);background:var(--vigne-soft,#E8EEE8);border-radius:6px;padding:7px 10px;margin-bottom:10px">Renseignez le C/N de l’engrais pour estimer l’azote disponible.</div>
     <div class="field"><label>Commentaire (facultatif)</label><input id="fu_comment" placeholder="ex. analyse de sol, fractionnement"></div>
     <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveFumure()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Enregistrer l'apport</button>`);
+  if(f){ const set=(i,v)=>{const e=document.getElementById(i); if(e)e.value=(v==null?'':v);};
+    set('fu_date',f.date); set('fu_ilot',f.ilot); set('fu_prod',f.produit); set('fu_type',f.type); set('fu_dose',f.dose); set('fu_unite',f.unite); set('fu_cn',f.cn); set('fu_n',f.n); set('fu_p',f.p); set('fu_k',f.k); set('fu_mgo',f.mgo); set('fu_comment',f.comment);
+    if(typeof fuHint==='function')fuHint();
+  }
+}
+function fuProdAuto(){
+  const v=(document.getElementById('fu_prod').value||'').trim(); if(!v)return;
+  const m=((meta.fumure_memo)||[]).find(x=>(x.nom||'').toLowerCase()===v.toLowerCase()); if(!m)return;
+  const setT=(i,val)=>{const e=document.getElementById(i); if(e)e.value=(val==null?'':val);};
+  setT('fu_type',m.type); setT('fu_unite',m.unite); setT('fu_cn',m.cn); setT('fu_n',m.az); setT('fu_p',m.p); setT('fu_k',m.k); setT('fu_mgo',m.mgo);
+  const dz=document.getElementById('fu_dose'); if(dz&&dz.value===''&&m.dose!=null)dz.value=m.dose;
+  if(typeof fuHint==='function')fuHint();
 }
 function saveFumure(){
   const g=id=>document.getElementById(id).value;
   const prod=g('fu_prod').trim();
   if(!prod){toast('Indiquez le produit / fertilisant.');return;}
-  fumure.push({id:'F'+Date.now(),date:g('fu_date'),ilot:g('fu_ilot'),produit:prod,type:g('fu_type'),
-    dose:g('fu_dose'),unite:g('fu_unite'),cn:g('fu_cn'),n:g('fu_n'),p:g('fu_p'),k:g('fu_k'),mgo:g('fu_mgo'),comment:g('fu_comment').trim()});
+  if(!g('fu_date')){toast('Indiquez la date.');return;}
+  if(!(parseFloat(g('fu_dose'))>0)){toast('Indiquez la dose (Qté/Ha).');return;}
+  if(g('fu_cn').trim()===''){toast("Indiquez le C/N de l'engrais.");return;}
+  const _rec={date:g('fu_date'),ilot:g('fu_ilot'),produit:prod,type:g('fu_type'),dose:g('fu_dose'),unite:g('fu_unite'),cn:g('fu_cn'),n:g('fu_n'),p:g('fu_p'),k:g('fu_k'),mgo:g('fu_mgo'),comment:g('fu_comment').trim()};
+  if(_editFumure){const _f=fumure.find(x=>x.id===_editFumure); if(_f)Object.assign(_f,_rec); _editFumure=null;} else fumure.push({id:'F'+Date.now(),..._rec});
+  meta.fumure_memo=meta.fumure_memo||[];
+  const _mi=meta.fumure_memo.findIndex(x=>(x.nom||'').toLowerCase()===prod.toLowerCase());
+  const _mm={nom:prod,type:_rec.type,unite:_rec.unite,cn:_rec.cn,az:_rec.n,p:_rec.p,k:_rec.k,mgo:_rec.mgo,dose:_rec.dose};
+  if(_mi>=0)meta.fumure_memo[_mi]=_mm; else meta.fumure_memo.push(_mm);
   saveDB(); closeModal(); renderFumure(); toast('Apport enregistré ✓');
 }
 function supprFumure(id){ if(confirm('Supprimer cet apport ?')){fumure=fumure.filter(f=>f.id!==id);saveDB();renderFumure();toast('Apport supprimé');} }
