@@ -96,6 +96,9 @@ tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--craie)}
 #prodBody tr{cursor:pointer}#prodBody tr:hover{background:var(--vigne-soft)}
 .tbl-wrap{overflow-x:auto}
+.parcScroll{max-height:62vh;overflow:auto}
+.parcScroll table{border-collapse:separate;border-spacing:0}
+.parcScroll thead th{position:sticky;top:0;z-index:3;background:var(--paper);box-shadow:inset 0 -1px 0 var(--line)}
 .tag-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;background:var(--vigne-soft);color:var(--vigne)}
 .tag-pill.lie{background:var(--lie-soft);color:var(--lie)}
 .tag-pill.laiton{background:var(--laiton-soft);color:var(--laiton)}
@@ -177,6 +180,7 @@ tbody tr:hover{background:var(--craie)}
   .topbar .tag{display:none}
   .saisieGrid{grid-template-columns:1fr}
   .ilotPick{max-height:48vh}
+  .parcScroll{max-height:56vh}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -546,15 +550,57 @@ let _parcOpen=new Set();
 function parcellePl(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.pl||0),0)*100)/100; return +p.pl||0; }
 function parcelleCad(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.cad||0),0)*100)/100; return +p.cad||0; }
 function recalcParcelle(p){ if(p.sub&&p.sub.length){ p.pl=parcellePl(p); p.cad=parcelleCad(p); } }
-function toggleParcDetail(key){ if(_parcOpen.has(key))_parcOpen.delete(key); else _parcOpen.add(key); renderParcelles(); }
-function toggleSub(key,i,checked){ const p=parcelles.find(x=>x.key===key); if(!p||!p.sub)return; p.sub[i].actif=checked; recalcParcelle(p); saveDB(); renderParcelles(); }
-function toggleParcActif(key,checked){ const p=parcelles.find(x=>x.key===key); if(!p)return; p.actif=checked; saveDB(); renderParcelles(); }
+function _renderParcellesKeepScroll(){ const b=document.querySelector('.parcScroll'); const st=b?b.scrollTop:0; renderParcelles(); const nb=document.querySelector('.parcScroll'); if(nb){ nb.scrollTop=st; requestAnimationFrame(function(){ nb.scrollTop=st; }); } }
+function toggleParcDetail(key){ if(_parcOpen.has(key))_parcOpen.delete(key); else _parcOpen.add(key); _renderParcellesKeepScroll(); }
+function toggleSub(key,i,checked){ const p=parcelles.find(x=>x.key===key); if(!p||!p.sub)return; p.sub[i].actif=checked; recalcParcelle(p); saveDB(); _renderParcellesKeepScroll(); }
+function toggleParcActif(key,checked){ const p=parcelles.find(x=>x.key===key); if(!p)return; p.actif=checked; saveDB(); _renderParcellesKeepScroll(); }
+function _nouvelIdParcelle(com){
+  try{ const used=parcelles.map(p=>p.id); return prochainCodeCommune(com, used, (typeof meta!=="undefined"&&meta&&meta.communes)||[]); }
+  catch(e){ let n=1, base=String(com||"P").slice(0,2).toUpperCase(); const ex=new Set(parcelles.map(p=>p.id)); while(ex.has(base+String(n).padStart(2,"0")))n++; return base+String(n).padStart(2,"0"); }
+}
+function _subVersParcelle(x){ return {key:"p"+Date.now()+"_"+Math.floor(Math.random()*1e5), id:_nouvelIdParcelle(x.com), com:x.com,ld:x.ld,cep:x.cep,ref:x.ref,cad:+x.cad||0,pl:+x.pl||0}; }
+function _ilotsDeParcelle(key){ return Object.keys(ilot_parcelles).filter(n=>(ilot_parcelles[n]||[]).includes(key)); }
+function _ajouterParcelleAuxIlots(newKey, noms){ noms.forEach(n=>{ if(!ilot_parcelles[n])ilot_parcelles[n]=[]; if(!ilot_parcelles[n].includes(newKey))ilot_parcelles[n].push(newKey); }); }
+function retirerSubDuGroupe(key, idx){
+  const p=parcelles.find(x=>x.key===key); if(!p||!p.sub)return; const x=p.sub[idx]; if(!x)return;
+  if(!confirm("Retirer \u00ab "+(x.ref||x.com||"cette parcelle")+" \u00bb du groupe et la remettre comme parcelle ind\u00e9pendante ?"))return;
+  const noms=_ilotsDeParcelle(p.key);
+  const np=_subVersParcelle(x); p.sub.splice(idx,1);
+  parcelles.push(np); _ajouterParcelleAuxIlots(np.key, noms);
+  if(p.sub.length<=1){ const r=p.sub[0]; if(r){ p.com=r.com;p.ld=r.ld;p.cep=r.cep;p.ref=r.ref;p.cad=+r.cad||0;p.pl=+r.pl||0; } delete p.sub; }
+  else { recalcParcelle(p); }
+  saveDB(); _renderParcellesKeepScroll(); toast("Parcelle retir\u00e9e du groupe \u2713");
+}
+function degrouperParcelle(key){
+  const p=parcelles.find(x=>x.key===key); if(!p||!p.sub||!p.sub.length)return;
+  if(!confirm("D\u00e9grouper cette parcelle en "+p.sub.length+" parcelles distinctes ?"))return;
+  const noms=_ilotsDeParcelle(p.key); const subs=p.sub.slice();
+  parcelles=parcelles.filter(x=>x.key!==p.key);
+  Object.keys(ilot_parcelles).forEach(n=>{ ilot_parcelles[n]=(ilot_parcelles[n]||[]).filter(k=>k!==p.key); });
+  subs.forEach(x=>{ const np=_subVersParcelle(x); parcelles.push(np); _ajouterParcelleAuxIlots(np.key, noms); });
+  _parcOpen.delete(p.key);
+  saveDB(); _renderParcellesKeepScroll(); toast(subs.length+" parcelles d\u00e9group\u00e9es \u2713");
+}
 function parcDetailHTML(p){
-  const subs=(p.sub&&p.sub.length)?p.sub:[{com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:p.cad,pl:p.pl,actif:p.actif!==false,_self:true}];
-  return `<div style="padding:9px 16px"><div style="font-size:11.5px;color:var(--mute);margin-bottom:6px">D\u00e9tail cadastral \u2014 d\u00e9cochez une parcelle arrach\u00e9e pour la sortir de la surface \u00e0 travailler.</div>`
-    +`<table style="width:100%;font-size:12px"><thead><tr><th style="width:28px"></th><th>Commune</th><th>Lieu-dit</th><th>R\u00e9f. cad.</th><th>C\u00e9page</th><th style="text-align:right">Surface (a)</th></tr></thead><tbody>`
-    +subs.map((x,i)=>{const on=x.actif!==false; const cb=x._self?`toggleParcActif('${p.key}',this.checked)`:`toggleSub('${p.key}',${i},this.checked)`; return `<tr style="${on?'':'opacity:.5'}"><td><input type="checkbox" ${on?'checked':''} onchange="${cb}"></td><td>${esc(x.com||'')}</td><td>${esc(x.ld||'')}</td><td style="font-size:11px;color:var(--mute)">${esc(x.ref||'')}</td><td>${esc(x.cep||'')}</td><td class="mono" style="text-align:right">${fmtS(x.pl)}${on?'':' <span style="color:var(--lie)">arrach\u00e9e</span>'}</td></tr>`;}).join('')
+  const grouped=!!(p.sub&&p.sub.length);
+  const subs=grouped?p.sub:[{com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:p.cad,pl:p.pl,actif:p.actif!==false,_self:true}];
+  return `<div style="padding:9px 16px">`
+    +`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px"><div style="font-size:11.5px;color:var(--mute)">D\u00e9tail cadastral \u2014 d\u00e9cochez une parcelle arrach\u00e9e pour la sortir de la surface \u00e0 travailler.</div>`
+    +(grouped?`<button class="btn btn-o" style="font-size:11px;padding:5px 11px" onclick="degrouperParcelle('${p.key}')">D\u00e9grouper</button>`:``)+`</div>`
+    +`<table style="width:100%;font-size:12px"><thead><tr><th style="width:28px"></th><th>Commune</th><th>Lieu-dit</th><th>R\u00e9f. cad.</th><th>C\u00e9page</th><th style="text-align:right">Surface (a)</th><th style="width:34px"></th></tr></thead><tbody>`
+    +subs.map((x,i)=>{const on=x.actif!==false; const cb=x._self?`toggleParcActif('${p.key}',this.checked)`:`toggleSub('${p.key}',${i},this.checked)`; const rm=grouped?`<button class="iconbtn btn-danger" title="Retirer du groupe" onclick="retirerSubDuGroupe('${p.key}',${i})" style="padding:2px 7px">\u2715</button>`:``; return `<tr style="${on?'':'opacity:.5'}"><td><input type="checkbox" ${on?'checked':''} onchange="${cb}"></td><td>${esc(x.com||'')}</td><td>${esc(x.ld||'')}</td><td style="font-size:11px;color:var(--mute)">${esc(x.ref||'')}</td><td>${esc(x.cep||'')}</td><td class="mono" style="text-align:right">${fmtS(x.pl)}${on?'':' <span style="color:var(--lie)">arrach\u00e9e</span>'}</td><td style="text-align:right">${rm}</td></tr>`;}).join('')
     +`</tbody></table></div>`;
+}
+function selectAllParc(ck){ document.querySelectorAll('.parcSel').forEach(cb=>cb.checked=ck); }
+function supprSelectionParcelles(){
+  if(!isConsultant){ toast('Action r\u00e9serv\u00e9e au mode consultant.'); return; }
+  const keys=Array.from(document.querySelectorAll('.parcSel:checked')).map(cb=>cb.value);
+  if(!keys.length){ toast('Aucune parcelle s\u00e9lectionn\u00e9e.'); return; }
+  if(!confirm('Supprimer d\u00e9finitivement '+keys.length+' parcelle'+(keys.length>1?'s':'')+' ? Cette action est irr\u00e9versible.')) return;
+  const ks=new Set(keys);
+  parcelles=parcelles.filter(p=>!ks.has(p.key));
+  Object.keys(ilot_parcelles).forEach(n=>{ ilot_parcelles[n]=(ilot_parcelles[n]||[]).filter(k=>!ks.has(k)); });
+  saveDB(); renderParcelles(); toast(keys.length+' parcelle'+(keys.length>1?'s':'')+' supprim\u00e9e'+(keys.length>1?'s':'')+' \u2713');
 }
 function mergeSelectedParcelles(){
   const keys=Array.from(document.querySelectorAll('.parcSel:checked')).map(cb=>cb.value);
@@ -568,7 +614,7 @@ function mergeSelectedParcelles(){
   Object.keys(ilot_parcelles).forEach(n=>{ const arr=ilot_parcelles[n]||[]; if(arr.some(k=>keySet.has(k))) ilot_parcelles[n]=Array.from(new Set(arr.map(k=>keySet.has(k)?merged.key:k))); });
   parcelles=parcelles.filter(p=>!keySet.has(p.key)); parcelles.push(merged);
   _parcOpen.add(merged.key);
-  saveDB(); renderParcelles(); toast(sub.length+' parcelles cadastrales fusionn\u00e9es.');
+  saveDB(); _renderParcellesKeepScroll(); toast(sub.length+' parcelles cadastrales fusionn\u00e9es.');
 }
 function calcIFT(doseAppli,doseHom,ratio){
   const da=parseFloat(String(doseAppli).replace(',','.')), dh=parseFloat(String(doseHom).replace(',','.'));
@@ -1332,8 +1378,8 @@ function renderParcelles(){
      <div class="sub">${parcelles.length} parcelles · ${fmtS(totPl)} a plantés / ${fmtS(totCad)} a cadastraux (${fmt(totPl/100,2)} ha)</div></div>
      <div style="display:flex;gap:8px;flex-wrap:wrap">
        <button class="btn btn-o" onclick="importFicheVendange()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>Importer (PDF Fiche Vendange)</button>
-       <button class="btn btn-o" onclick="teneursModal()">Teneurs Cu / Folpel</button><button class="btn btn-g" onclick="editParcelle()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une parcelle</button><button class="btn btn-o" onclick="mergeSelectedParcelles()" title="Cochez des parcelles puis fusionnez-les en une seule">Fusionner la sélection</button></div></div>
-   <div style="background:var(--vigne-soft);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--vigne2);margin-bottom:10px">Cumuls de la campagne. Plafond <b>cuivre : 4 kg/ha/an</b> (28 kg/ha sur 7 ans, en cuivre métal). Cuivre estimé d'après e-phy &mdash; vérifiez via « Teneurs Cu / Folpel ».</div><div class="card"><div class="tbl-wrap"><table><thead><tr><th></th><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale (a)</th><th>S. plantée (a)</th><th>Cuivre kg/ha</th><th>Folpel kg/ha</th><th></th></tr></thead><tbody>
+       <button class="btn btn-o" onclick="teneursModal()">Teneurs Cu / Folpel</button><button class="btn btn-g" onclick="editParcelle()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une parcelle</button><button class="btn btn-o" onclick="mergeSelectedParcelles()" title="Cochez des parcelles puis fusionnez-les en une seule">Fusionner la sélection</button>${isConsultant?`<button class="btn" style="border:1px solid var(--lie);color:var(--lie)" onclick="supprSelectionParcelles()">Supprimer la sélection</button>`:''}</div></div>
+   <div style="background:var(--vigne-soft);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--vigne2);margin-bottom:10px">Cumuls de la campagne. Plafond <b>cuivre : 4 kg/ha/an</b> (28 kg/ha sur 7 ans, en cuivre métal). Cuivre estimé d'après e-phy &mdash; vérifiez via « Teneurs Cu / Folpel ».</div><div class="card"><div class="tbl-wrap parcScroll"><table><thead><tr><th>${isConsultant?`<input type="checkbox" title="Tout sélectionner" onclick="selectAllParc(this.checked)">`:''}</th><th>Parcelle</th><th>Commune</th><th>Lieu-dit</th><th>Cépage</th><th>S. cadastrale (a)</th><th>S. plantée (a)</th><th>Cuivre kg/ha</th><th>Folpel kg/ha</th><th></th></tr></thead><tbody>
    ${triParcelles(parcelles).map(p=>{
      const inIlots=Object.entries(ilot_parcelles).filter(([n,ks])=>ks.includes(p.key)).map(([n])=>n);
      const cm=cumulParcelle(p.key);
@@ -1370,19 +1416,26 @@ async function lireFichePDF(buf){
 }
 function parseFicheVendange(pages){
   const B0={com:[105,168],ld:[185,302],ref:[300,362],surf:[363,435],cep:[438,515]};
-  /* Calage horizontal : on rep\u00e8re la colonne \u00ab Commune \u00bb de l'en-t\u00eate (m\u00eame ligne que \u00ab Lieu-dit \u00bb)
-     et on d\u00e9cale toutes les bandes en cons\u00e9quence, pour les fiches dont la mise en page diff\u00e8re. */
-  let off=0;
+  // D\u00e9tection adaptative des colonnes depuis l'en-t\u00eate (robuste aux mises en page d\u00e9cal\u00e9es).
+  let B=B0;
   try{
     const all=[]; pages.forEach(items=>items.forEach(it=>all.push(it)));
-    const comH=all.filter(t=>/^commune$/i.test(String(t.str).trim()));
-    for(const c of comH){
-      const sameRow=all.filter(t=>Math.abs(t.y-c.y)<=3);
-      if(sameRow.some(t=>/lieu/i.test(t.str)) && c.x>95){ off=c.x-113; break; }
+    const low=t=>String(t.str).trim().toLowerCase();
+    const ld0=all.find(t=>low(t).indexOf("lieu")>=0);
+    if(ld0){
+      const row=all.filter(t=>Math.abs(t.y-ld0.y)<=8);
+      const col=pred=>{ const c=row.filter(pred).sort((a,b)=>a.x-b.x); return c.length?c[0].x:null; };
+      const comX=col(t=>low(t)==="commune"&&t.x>95), ldX=ld0.x;
+      const refX=col(t=>low(t).indexOf("rence")>=0);
+      const surfX=col(t=>/^ha\b/.test(low(t))||low(t).indexOf("superficie")>=0);
+      const cepX=col(t=>low(t).indexOf("page")>=0);
+      const annX=col(t=>low(t).indexOf("ann")>=0);
+      if(comX!=null&&refX!=null&&surfX!=null&&cepX!=null){
+        const mid=(a,b)=>(a+b)/2;
+        B={com:[comX-24,mid(comX,ldX)],ld:[mid(comX,ldX),mid(ldX,refX)],ref:[mid(ldX,refX),mid(refX,surfX)],surf:[mid(refX,surfX),mid(surfX,cepX)],cep:[mid(surfX,cepX),(annX!=null?(cepX+annX)/2:cepX+90)]};
+      }
     }
   }catch(e){}
-  const _sh=b=>[b[0]+off,b[1]+off];
-  const B={com:_sh(B0.com),ld:_sh(B0.ld),ref:_sh(B0.ref),surf:_sh(B0.surf),cep:_sh(B0.cep)};
   const inB=(x,b)=>x>=b[0]&&x<b[1];
   const REFRE=/\d{0,3}[A-Z]{1,2}\d{2,4}[A-Z]?/;
   const hasA=s=>/[A-Za-zÀ-ÿ]/.test(s);
@@ -1393,6 +1446,7 @@ function parseFicheVendange(pages){
     rows.sort((a,b)=>b.y-a.y); /* y depuis le bas : haut → bas */
     rows.forEach(r=>{
       const toks=r.items.slice().sort((a,b)=>a.x-b.x);
+      const _rt=toks.map(t=>String(t.str)).join(" ").toLowerCase(); if(/interprofessionnel|cedex|www\.|\bsiret\b/.test(_rt)) return;
       const band=b=>toks.filter(t=>inB(t.x,b));
       const comStr=band(B.com).map(t=>t.str).join(' ').replace(/\s+/g,' ').trim();
       if(comStr && hasA(comStr) && !/total/i.test(comStr)){if(comStr!==curCom){curLd='';curRef='';}curCom=comStr;}
