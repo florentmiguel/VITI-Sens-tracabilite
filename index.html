@@ -2,7 +2,13 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VITI Sens">
+<meta name="theme-color" content="#1F3A2E">
+<link rel="manifest" href='data:application/manifest+json,{"name":"VITI Sens","short_name":"VITI Sens","start_url":".","display":"standalone","background_color":"%231F3A2E","theme_color":"%231F3A2E"}'>
 <meta name="theme-color" content="#1F3A2E">
 <title>VITI Sens — Traçabilité phytosanitaire</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -216,6 +222,9 @@ tbody tr:hover{background:var(--craie)}
       <span>Campagne</span><input id="ctxCamp" maxlength="9" oninput="meta.campagne=this.value;saveDB()">
     </div>
     <button id="roReturn" class="iconbtn" style="display:none;background:var(--laiton);color:#fff;font-size:12px;font-weight:600;padding:6px 12px;gap:6px" onclick="returnToOwn()">⟲ Dossier <span id="roLabel"></span> — revenir à mes clients</button>
+    <button class="iconbtn" title="Plein écran" onclick="toggleFullscreen()">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></svg>
+    </button>
     <button class="iconbtn" title="Réglages" onclick="openSettings()">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -379,11 +388,13 @@ async function loadDB(uid){
 
     if(needSave) saveDB();
   }
+  loadedUid=uid;
 }
-let _saveTimer=null;
+let _saveTimer=null; let loadedUid=null;
 function saveDB(){ syncHeader(); if(readonly||!SB||!session)return; clearTimeout(_saveTimer); _saveTimer=setTimeout(persist,700); }
 async function persist(){
   const uid=viewingUid||session.user.id;
+  if(loadedUid && loadedUid!==uid) return; /* sécurité : ne jamais écraser un dossier non chargé en mémoire */
   const payload={parcelles,ilots,ilot_parcelles,passages,meta,stock_entrees,travaux,fumure,v2_ares:true}; /* flag migration */
   const {error}=await SB.from('traca_data').upsert({user_id:uid,payload,updated_at:new Date().toISOString()});
   if(error)toast('Erreur de sauvegarde : '+error.message);
@@ -406,6 +417,7 @@ function chargerExemple(){
 
 /* ===================== AUTH SUPABASE ===================== */
 async function doLogin(){
+  enterFullscreen();
   const email=document.getElementById('lmail').value.trim(), pwd=document.getElementById('lpwd').value;
   const err=document.getElementById('lerr');
   if(!SB){err.textContent='Application non configurée (voir NOTICE_supabase.md).';return;}
@@ -528,7 +540,10 @@ async function ouvrirPortail(){
     if(data&&data.url)location.href=data.url; else toast('Aucun abonnement à gérer pour le moment.');
   }catch(e){ toast('Action impossible.'); }
 }
-async function logout(){ if(SB)await SB.auth.signOut(); location.reload(); }
+function enterFullscreen(){ try{ const el=document.documentElement; const fn=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen; if(fn && !(document.fullscreenElement||document.webkitFullscreenElement)) fn.call(el); }catch(e){} }
+function exitFullscreen(){ try{ const fn=document.exitFullscreen||document.webkitExitFullscreen||document.msExitFullscreen; if(fn && (document.fullscreenElement||document.webkitFullscreenElement)) fn.call(document); }catch(e){} }
+function toggleFullscreen(){ if(document.fullscreenElement||document.webkitFullscreenElement) exitFullscreen(); else enterFullscreen(); }
+async function logout(){ exitFullscreen(); if(SB)await SB.auth.signOut(); location.reload(); }
 
 /* ===================== CALCULS ===================== */
 /* surfaces stockées en ares (1 are = 100 m²) */
@@ -859,8 +874,8 @@ async function nouveauClient(){
 function ouvrirClient(uid){
   const c=clientsCache.find(x=>x.user_id===uid); if(!c)return;
   const d=JSON.parse(JSON.stringify(c.payload||{}));
-  parcelles=d.parcelles||[];ilots=d.ilots||[];ilot_parcelles=d.ilot_parcelles||{};passages=d.passages||[];meta=d.meta||{client:'',campagne:''}; recalcIFTs(passages);
-  readonly=false; viewingLabel=meta.client||'client'; viewingUid=uid;
+  parcelles=d.parcelles||[];ilots=d.ilots||[];ilot_parcelles=d.ilot_parcelles||{};passages=d.passages||[];stock_entrees=d.stock_entrees||[];travaux=d.travaux||[];fumure=d.fumure||[];meta=d.meta||{client:'',campagne:''}; recalcIFTs(passages);
+  readonly=false; viewingLabel=meta.client||'client'; viewingUid=uid; loadedUid=uid;
   // topbar : rester en "Mode consultant" (le bandeau doré indique le client)
   const lbl=document.getElementById('ctxConsultantLabel');
   const csp=document.getElementById('ctxClientSpan');
@@ -888,6 +903,127 @@ function curIlots(){ return Array.from(document.querySelectorAll('#sIlotBox inpu
 function curIlot(){ return curIlots()[0]||''; }
 function toggleIlot(cb){ majInstrument(); renderPanier(); }
 function syncIlotChecks(list){ document.querySelectorAll('#sIlotBox input[type=checkbox]').forEach(cb=>{ cb.checked=(list||[]).includes(cb.value); }); }
+/* ===================== IMPORT TABLEAU DE TRAÇABILITÉ (PDF) — consultant ===================== */
+function _tracaNum(s){ const m=String(s==null?'':s).replace(',','.').match(/-?\d+(?:\.\d+)?/); return m?parseFloat(m[0]):null; }
+function _tracaUnit(s){ const m=String(s==null?'':s).match(/[a-zA-Z]+\s*\/\s*[a-zA-Z]+/); let u=m?m[0].replace(/\s+/g,'').toLowerCase():''; if(/^k\/ha$/.test(u))u='kg/ha'; return u; }
+function tracaCategorie(cible,typeStr){
+  const c=String(cible||'').toLowerCase(), t=String(typeStr||'').toLowerCase();
+  if(t.indexOf('biocontr')>=0) return 'biocontrole';
+  if(t.indexOf('engrais')>=0||c.indexOf('fertilis')>=0||c.indexOf('foliaire')>=0||c.indexOf('floraison')>=0||c.indexOf('nouaison')>=0) return 'mfsc';
+  if(t.indexOf('insecticide')>=0||c.indexOf('flavescence')>=0||c.indexOf('cicadelle')>=0||c.indexOf('tordeuse')>=0||c.indexOf('eudemis')>=0||c.indexOf('cochylis')>=0) return 'insecticide';
+  if(t.indexOf('herbicide')>=0||c.indexOf('desherb')>=0||c.indexOf('adventice')>=0) return 'herbicide';
+  return 'fongicide';
+}
+function parseTracaPages(pages){
+  const B={passage:[0,90],cible:[90,150],produit:[150,222],sa:[222,288],type:[288,352],doseH:[352,412],doseP:[412,472],vol:[472,535],obs:[715,99999]};
+  const inB=(x,b)=>x>=b[0]&&x<b[1];
+  const out=[];
+  pages.forEach(items=>{
+    const rows=[];
+    items.forEach(it=>{let r=rows.find(rr=>Math.abs(rr.y-it.y)<=2.5);if(!r){r={y:it.y,its:[]};rows.push(r);}r.its.push(it);});
+    rows.sort((a,b)=>b.y-a.y);
+    const pick=(toks,b)=>toks.filter(t=>inB(t.x,b)).sort((a,b2)=>a.x-b2.x).map(t=>t.str).join(' ').replace(/\s+/g,' ').trim();
+    let cur=null;
+    rows.forEach(r=>{
+      const toks=r.its, rt=toks.map(t=>t.str).join(' ');
+      if(/Nombre de traitements|Conseil viticole|Passage Cible|TABLEAU DE|Exploitation :|Campagne 20/i.test(rt)) return;
+      const dP=pick(toks,B.doseP);
+      if(/\d/.test(dP)){
+        cur={passage:pick(toks,B.passage),cible:pick(toks,B.cible),produit:pick(toks,B.produit),sa:pick(toks,B.sa),type:pick(toks,B.type),doseH:pick(toks,B.doseH),doseP:dP,vol:pick(toks,B.vol),obs:pick(toks,B.obs)};
+        out.push(cur);
+      } else if(cur){
+        const a=pick(toks,B.produit);if(a)cur.produit+=' '+a;
+        const s=pick(toks,B.sa);if(s)cur.sa+=' '+s;
+        const t=pick(toks,B.type);if(t)cur.type+=' '+t;
+        const o=pick(toks,B.obs);if(o)cur.obs+=(cur.obs?' ':'')+o;
+        const c=pick(toks,B.cible);if(c)cur.cible+=' '+c;
+      }
+    });
+  });
+  return out;
+}
+async function lireTracaPDF(buf){
+  const pdfjs=await loadPdfJs();
+  const pdf=await pdfjs.getDocument({data:buf}).promise;
+  const pages=[];
+  for(let i=1;i<=pdf.numPages;i++){
+    const tc=await (await pdf.getPage(i)).getTextContent();
+    pages.push(tc.items.map(it=>({str:it.str,x:it.transform[4],y:it.transform[5]})).filter(it=>it.str&&it.str.trim()));
+  }
+  return parseTracaPages(pages);
+}
+let _tracaRows=null;
+function importTracaPDF(){
+  if(!isConsultant){ toast('Réservé au mode consultant.'); return; }
+  if(!ilots.length){ toast('Définissez d\'abord au moins un îlot pour ce dossier.'); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/pdf,.pdf';
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f)return; toast('Lecture du tableau…');
+    const rd=new FileReader();
+    rd.onload=async()=>{ try{ const rows=await lireTracaPDF(rd.result);
+      if(!rows.length){ toast('Aucune ligne détectée — vérifiez qu\'il s\'agit d\'un tableau de traçabilité VITI Sens.'); return; }
+      _tracaRows=rows; previewTraca();
+    }catch(e){ toast('Lecture impossible : '+(e.message||e)); } };
+    rd.readAsArrayBuffer(f); };
+  inp.click();
+}
+function _tracaGroups(){
+  const g=[]; (_tracaRows||[]).forEach(r=>{ let k=g.find(x=>x.label===r.passage); if(!k){k={label:r.passage||'—',rows:[]};g.push(k);} k.rows.push(r); });
+  return g;
+}
+const _TCATLBL={fongicide:'Fongicide',insecticide:'Insecticide',herbicide:'Herbicide',biocontrole:'Biocontrôle',mfsc:'Engrais (hors IFT)'};
+function previewTraca(){
+  const groups=_tracaGroups();
+  const ilOpts=ilots.map(i=>`<label><input type="checkbox" class="tracaIlot" value="${esc(i.nom)}" checked><span>${esc(i.nom)} <span style="color:var(--mute);font-size:12px">(${fmt(ilotSurfaces(i.nom).pl/100,2)} ha)</span></span></label>`).join('');
+  const stadeOpts='<option value="">— stade —</option>'+BBCH.map(b=>`<option value="${b[0]}">${esc(b[1])}</option>`).join('');
+  const blocs=groups.map(g=>{
+    const rows=g.rows.map(r=>{ const cat=tracaCategorie(r.cible,r.type);
+      return `<tr><td>${esc(r.cible)}</td><td>${esc(r.produit)}</td><td style="color:var(--mute)">${esc(r.sa)}</td>
+        <td><span class="tag-pill ${cat==='mfsc'?'mute':(cat==='insecticide'?'laiton':'')}" style="font-size:10px">${_TCATLBL[cat]}</span></td>
+        <td style="text-align:right">${esc(r.doseP)}</td><td style="text-align:right;color:var(--mute)">${esc(r.doseH)}</td></tr>`;}).join('');
+    return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div class="row" style="align-items:flex-end;gap:10px;margin-bottom:6px">
+        <div style="font-family:var(--display);font-size:15px;color:var(--vigne);font-weight:600;flex:none">Passage ${esc(g.label)}</div>
+        <div class="field" style="margin:0"><label style="font-size:11px">Date</label><input type="date" id="trd_${esc(g.label)}"></div>
+        <div class="field" style="margin:0"><label style="font-size:11px">Stade</label><select id="trs_${esc(g.label)}">${stadeOpts}</select></div>
+      </div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:var(--mute);font-size:10px;text-transform:uppercase">
+        <th style="text-align:left">Cible</th><th style="text-align:left">Produit</th><th style="text-align:left">Substance</th><th style="text-align:left">Catégorie</th><th style="text-align:right">Dose prescrite</th><th style="text-align:right">Dose homol.</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  }).join('');
+  openModal('Importer un tableau de traçabilité', `<div style="max-height:74vh;overflow:auto;padding-right:4px">
+    <div class="alert info" style="margin-bottom:12px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
+      <div>${groups.length} passages détectés · ${(_tracaRows||[]).length} produits. L'IFT est calculé à partir de la dose prescrite ÷ dose homologuée. Renseignez la date (et le stade) de chaque passage si vous les connaissez, puis choisissez les îlots concernés.</div></div>
+    <div class="field"><label>Îlots concernés (un passage sera créé par îlot coché)</label><div class="ilotPick">${ilOpts}</div></div>
+    ${blocs}
+    <button class="btn btn-g" style="width:100%;justify-content:center" onclick="importerTraca()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Importer les passages</button>
+  </div>`);
+}
+function importerTraca(){
+  const ilist=[...document.querySelectorAll('.tracaIlot:checked')].map(c=>c.value);
+  if(!ilist.length){ toast('Sélectionnez au moins un îlot.'); return; }
+  const groups=_tracaGroups();
+  let nb=0;
+  groups.forEach((g,gi)=>{
+    const date=(document.getElementById('trd_'+g.label)||{}).value||'';
+    const stadeCode=(document.getElementById('trs_'+g.label)||{}).value||'';
+    const stadeLbl=(BBCH.find(b=>b[0]===stadeCode)||['',''])[1];
+    const tmpl=g.rows.map(r=>{ const cat=tracaCategorie(r.cible,r.type); const unit=_tracaUnit(r.doseP)||_tracaUnit(r.doseH);
+      const da=_tracaNum(r.doseP), dh=_tracaNum(r.doseH);
+      return {n:r.produit,amm:'',sa:r.sa,f:'',h:'',cmr:'',fam:{},type:cat,cible:r.cible,
+        doseHom:(dh!=null?String(dh):''),unite:unit,doseAppli:(da!=null?da:0),qteTot:null,doseMode:'ha',dar:'',znt:'',
+        doseRef:(dh!=null?dh:(da!=null?da:null)),refUn:unit,refSrc:'hom',refCible:'',horsListe:true,
+        vol:(_tracaNum(r.vol)||''),obs:r.obs||''};});
+    ilist.forEach((ilot,ii)=>{
+      passages.push({id:'P'+Date.now()+'_'+gi+'_'+ii,date,stade:stadeCode,stadeLbl,ilot,fd:false,pluvio:'',
+        ratio:ratioIlot(ilot),sPl:ilotSurfaces(ilot).pl,source:'import-traca',
+        produits:tmpl.map(p=>({...p}))});
+      nb++;
+    });
+  });
+  recalcIFTs(passages); saveDB(); closeModal(); _tracaRows=null;
+  toast(nb+' passage'+(nb>1?'s':'')+' importé'+(nb>1?'s':'')+' ✓'); go('bilan');
+}
+
 function renderSaisie(){
   selIlots=[];
   if(!ilots.length){
@@ -901,7 +1037,7 @@ function renderSaisie(){
   const ilotOpts=ilots.map(i=>`<option value="${esc(i.nom)}">${esc(i.nom)} (${fmt(ilotSurfaces(i.nom).pl/100,2)} ha)</option>`).join('');
   document.getElementById('pg-saisie').innerHTML=`
   <div class="ph"><div><div class="eyebrow">Nouveau traitement</div><h2>Saisir un passage</h2>
-    <div class="sub">Sélectionnez l'îlot et composez la bouillie depuis la base e-phy.</div></div><button class="btn btn-o" onclick="materielTRD()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>Matériel anti-dérive</button></div>
+    <div class="sub">Sélectionnez l'îlot et composez la bouillie depuis la base e-phy.</div></div><button class="btn btn-o" onclick="materielTRD()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>Matériel anti-dérive</button>${isConsultant?`<button class="btn btn-o" onclick="importTracaPDF()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Importer un conseil (PDF)</button>`:''}</div>
   <div class="saisieGrid">
     <div class="card pad">
       <div class="row"><div class="field"><label>Date</label><input type="date" id="sDate" value="${new Date().toISOString().slice(0,10)}"></div>
@@ -2000,8 +2136,13 @@ function confirmerDuplication(nomSrc){
 
 /* ===================== EXPORT / IMPORT ===================== */
 function exportJSON(){
-  const blob=new Blob([JSON.stringify({parcelles,ilots,ilot_parcelles,passages,meta},null,2)],{type:'application/json'});
-  dl(blob,`VITI_Sens_traca_${meta.campagne}.json`);toast('Sauvegarde téléchargée');
+  const stamp=new Date().toISOString().slice(0,10);
+  const safe=s=>(String(s||'').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'')||'dossier');
+  const data={_export:{app:'VITI Sens',type:'sauvegarde-complete',date:new Date().toISOString()},
+    parcelles,ilots,ilot_parcelles,passages,meta,stock_entrees,travaux,fumure};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  dl(blob,`VITI_Sens_sauvegarde_${safe(meta.client)}_${safe(meta.campagne)}_${stamp}.json`);
+  toast('Sauvegarde complète téléchargée');
 }
 function importJSON(){
   const inp=document.createElement('input');inp.type='file';inp.accept='.json';
@@ -2306,71 +2447,144 @@ function lireBonLivraison(){
 }
 
 /* ===================== TRAVAUX (calendrier) ===================== */
-const TRAVAUX_DEFAUT=['Taille','Tirage des bois','Pliage / Attachage','Ébourgeonnage','Épamprage','Relevage','Palissage / Accolage','Rognage / Écimage','Effeuillage','Éclaircissage (vendange en vert)','Tonte / Fauchage de l\'enherbement','Travail du sol / Décavaillonnage','Désherbage mécanique','Broyage des sarments','Entretien du palissage','Complantation','Plantation','Arrachage','Vendange','Observation / Comptage'];
-function typesTravaux(){ return [...TRAVAUX_DEFAUT, ...((meta.travaux_types)||[])].filter((v,i,a)=>a.indexOf(v)===i); }
+const TV_MANUEL=['Taille','Tirage des bois','Pliage / Attachage','Ébourgeonnage','Épamprage','Relevage','Palissage / Accolage','Effeuillage manuel','Éclaircissage (vendange en vert)','Entretien du palissage','Complantation','Plantation','Arrachage','Vendange','Observation / Comptage'];
+const TV_MECA=['Prétaillage','Rognage / Écimage','Tonte / Fauchage de l\'enherbement','Travail du sol / Décavaillonnage','Désherbage mécanique','Broyage des sarments','Effeuillage mécanique'];
 const MOIS=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+function typesParMode(mode){ const def=(mode==='Mécanique')?TV_MECA:TV_MANUEL; const cust=((meta.travaux_types_mode||{})[mode])||[]; return [...def,...cust].filter((v,i,a)=>a.indexOf(v)===i); }
+/* ---- helpers lecture (compatibles anciens enregistrements) ---- */
+function _tvDate(t){ return t.date_debut||t.date||''; }
+function _tvFin(t){ return t.date_fin||t.date_debut||t.date||''; }
+function _tvH(t){ return +t.heures||0; }
+function _tvMode(t){ return t.mode||'Manuel'; }
+function _tvParcs(t){ let keys=(t.parcelles&&t.parcelles.length)?t.parcelles:((t.ilot&&ilot_parcelles[t.ilot])?ilot_parcelles[t.ilot]:[]); return keys.map(k=>parcelles.find(p=>p.key===k)).filter(Boolean); }
+
 function renderTravaux(){
   const el=document.getElementById('pg-travaux');
-  const sorted=[...travaux].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const sorted=[...travaux].sort((a,b)=>(_tvDate(b)).localeCompare(_tvDate(a)));
   const groups={};
-  sorted.forEach(t=>{ const k=(t.date||'').slice(0,7)||'0'; (groups[k]=groups[k]||[]).push(t); });
+  sorted.forEach(t=>{ const k=(_tvDate(t)||'').slice(0,7)||'0'; (groups[k]=groups[k]||[]).push(t); });
   const gh=Object.keys(groups).sort((a,b)=>b.localeCompare(a)).map(k=>{
     const [y,m]=k.split('-'); const titre=m?(MOIS[+m-1]+' '+y):'Sans date';
-    const rows=groups[k].map(t=>`<div onclick="editTravail('${t.id}')" title="Cliquer pour modifier" style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
-      <div style="width:40px;text-align:center;flex:none"><div style="font-family:var(--display);font-size:18px;color:var(--vigne);font-weight:600">${(t.date||'').slice(8,10)||'–'}</div></div>
-      <div style="flex:1"><div style="font-weight:600">${esc(t.type)} <span class="tag-pill ${t.mode==='Mécanique'?'laiton':(t.mode==='Mixte'?'':'mute')}" style="font-size:10px">${esc(t.mode||'')}</span></div>
-        <div style="font-size:12px;color:var(--mute)">${t.ilot?esc(t.ilot):'Toute l\'exploitation'}${t.heures?' · '+esc(t.heures)+' h':''}${t.comment?' · '+esc(t.comment):''}</div></div>
-      <button class="iconbtn btn-danger" onclick="event.stopPropagation();supprTravail('${t.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`).join('');
+    const rows=groups[k].map(t=>{
+      const d=_tvDate(t), f=_tvFin(t); const periode=(f&&f!==d)?('du '+dateFR(d)+' au '+dateFR(f)):dateFR(d);
+      const ps=_tvParcs(t); const loc=ps.length?ps.map(p=>esc(p.id||p.com||'')).join(', '):(t.ilot?esc(t.ilot):'Parcelles non précisées');
+      return `<div onclick="editTravail('${t.id}')" title="Cliquer pour modifier" style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer">
+      <div style="width:40px;text-align:center;flex:none"><div style="font-family:var(--display);font-size:18px;color:var(--vigne);font-weight:600">${(d||'').slice(8,10)||'—'}</div></div>
+      <div style="flex:1"><div style="font-weight:600">${esc(t.type)} <span class="tag-pill ${_tvMode(t)==='Mécanique'?'laiton':'mute'}" style="font-size:10px">${esc(_tvMode(t))}</span></div>
+        <div style="font-size:12px;color:var(--mute)">${periode} · ${loc}${t.heures?' · '+esc(t.heures)+' h':''}${t.comment?' · '+esc(t.comment):''}</div></div>
+      <button class="iconbtn btn-danger" onclick="event.stopPropagation();supprTravail('${t.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`;}).join('');
     return `<div class="card pad" style="margin-bottom:14px"><div style="font-family:var(--display);font-size:15px;color:var(--vigne);text-transform:capitalize;margin-bottom:2px">${titre} <span style="font-size:12px;color:var(--mute);font-weight:400">· ${groups[k].length} intervention${groups[k].length>1?'s':''}</span></div>${rows}</div>`;
   }).join('');
   el.innerHTML=`<div class="ph"><div><div class="eyebrow">Suivi</div><h2>Calendrier des travaux</h2>
     <div class="sub">Journal des interventions manuelles et mécaniques — pièce utile pour les audits de certification.</div></div>
-    <div class="row" style="flex:none;gap:8px"><button class="btn btn-o" onclick="travauxPDF()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>Export PDF</button>
+    <div class="row" style="flex:none;gap:8px"><button class="btn btn-o" onclick="renderTravauxStats()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Statistiques</button>
+    <button class="btn btn-o" onclick="travauxPDF()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>Export PDF</button>
     <button class="btn btn-g" onclick="ouvrirTravail()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Nouvelle intervention</button></div></div>
     ${travaux.length?gh:'<div class="card pad" style="color:var(--mute)">Aucune intervention enregistrée. Cliquez « Nouvelle intervention » pour démarrer le journal.</div>'}`;
 }
 let _editTravail=null;
 function editTravail(id){ ouvrirTravail(id); }
+function tvFillTypes(keepVal){ const mode=document.getElementById('tv_mode').value; const sel=document.getElementById('tv_type'); if(!sel)return; sel.innerHTML=typesParMode(mode).map(t=>`<option>${esc(t)}</option>`).join('')+'<option value="__new">➕ Nouveau type…</option>'; if(keepVal&&[...sel.options].some(o=>o.value===keepVal||o.text===keepVal))sel.value=keepVal; const nw=document.getElementById('tv_newwrap'); if(nw)nw.style.display=(sel.value==='__new')?'block':'none'; }
+function tvSelAllParc(ck){ document.querySelectorAll('.tvParcCk').forEach(cb=>cb.checked=ck); }
+function tvToggleCom(c){ const ks=new Set(parcelles.filter(p=>(p.com||'')===c).map(p=>p.key)); const cbs=[...document.querySelectorAll('.tvParcCk')].filter(cb=>ks.has(cb.value)); const allIn=cbs.length&&cbs.every(cb=>cb.checked); cbs.forEach(cb=>cb.checked=!allIn); }
+function tvSelectedParcs(){ return [...document.querySelectorAll('.tvParcCk:checked')].map(cb=>cb.value); }
+function tvTypeAuto(){ const ty=document.getElementById('tv_type'); if(!ty)return; const t=ty.value; if(!t||t==='__new')return; const m=((meta.travaux_memo)||{})[t]; const h=document.getElementById('tv_h'); if(m&&h&&!h.value)h.value=m.heures||''; }
 function ouvrirTravail(id){
   const t=id?travaux.find(x=>x.id===id):null; _editTravail=t?id:null;
-  const types=typesTravaux();
-  const ilopts=['<option value="">Toute l\'exploitation</option>'].concat(ilots.map(i=>`<option>${esc(i.nom)}</option>`)).join('');
+  const today=new Date().toISOString().slice(0,10);
+  const coms=[...new Set(parcelles.map(p=>p.com).filter(Boolean))].sort();
+  const parcBox=`<div class="field"><label>Parcelles concernées (sélection multiple)</label>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+      <button type="button" class="tag-pill laiton" style="cursor:pointer;border:none;font-size:11px" onclick="tvSelAllParc(true)">Tout</button>
+      <button type="button" class="tag-pill mute" style="cursor:pointer;border:none;font-size:11px" onclick="tvSelAllParc(false)">Aucun</button>
+      ${coms.map(c=>`<button type="button" class="tag-pill mute" style="cursor:pointer;border:none;font-size:11px" onclick="tvToggleCom('${esc(c)}')">${esc(c)}</button>`).join('')}
+    </div>
+    <div id="tv_parcBox" class="ilotPick">${parcelles.length?parcelles.map(p=>`<label><input type="checkbox" class="tvParcCk" value="${esc(p.key)}"><span>${esc(p.ld||p.id||p.com||'—')} <span style="color:var(--mute);font-size:12px">${fmt(parcellePl(p)/100,2)} ha</span></span></label>`).join(''):'<div style="color:var(--mute);font-size:12px;padding:6px">Aucune parcelle. Créez-en dans le parcellaire.</div>'}</div></div>`;
   openModal(_editTravail?"Modifier l'intervention":'Nouvelle intervention',`
-    <div class="row"><div class="field"><label>Date</label><input id="tv_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
-      <div class="field"><label>Mode</label><select id="tv_mode"><option>Manuel</option><option>Mécanique</option><option>Mixte</option></select></div></div>
-    <div class="field"><label>Type d'intervention</label>
-      <select id="tv_type" onchange="document.getElementById('tv_newwrap').style.display=this.value==='__new'?'block':'none';tvTypeAuto()">
-        ${types.map(t=>`<option>${esc(t)}</option>`).join('')}<option value="__new">➕ Nouveau type…</option></select></div>
-    <div class="field" id="tv_newwrap" style="display:none"><label>Nouveau type d'intervention</label><input id="tv_new" placeholder="ex. Passage d'épampreuse"></div>
-    <div class="row"><div class="field"><label>Îlot (facultatif)</label><select id="tv_ilot">${ilopts}</select></div>
+    <div class="row"><div class="field"><label>Date de début</label><input id="tv_debut" type="date" value="${today}"></div>
+      <div class="field"><label>Date de fin</label><input id="tv_fin" type="date" value="${today}"></div></div>
+    <div class="row"><div class="field"><label>Mode</label><select id="tv_mode" onchange="tvFillTypes()"><option>Manuel</option><option>Mécanique</option></select></div>
       <div class="field"><label>Durée en heures</label><input id="tv_h" type="number" step="0.5" min="0" placeholder="ex. 8"></div></div>
+    <div class="field"><label>Type d'intervention</label>
+      <select id="tv_type" onchange="document.getElementById('tv_newwrap').style.display=this.value==='__new'?'block':'none';tvTypeAuto()"></select></div>
+    <div class="field" id="tv_newwrap" style="display:none"><label>Nouveau type d'intervention</label><input id="tv_new" placeholder="ex. Passage d'épampreuse"></div>
+    ${parcBox}
     <div class="field"><label>Commentaire (facultatif)</label><input id="tv_comment" placeholder="ex. parcelle jeune, sol ressuyé"></div>
     <button class="btn btn-g" style="width:100%;justify-content:center" onclick="saveTravail()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Enregistrer l'intervention</button>`);
+  tvFillTypes();
   if(t){ const set=(i,v)=>{const e=document.getElementById(i); if(e)e.value=(v==null?'':v);};
-    set('tv_date',t.date); set('tv_mode',t.mode); set('tv_ilot',t.ilot); set('tv_h',t.heures); set('tv_comment',t.comment);
-    const ty=document.getElementById('tv_type'); if(ty&&[...ty.options].some(o=>o.value===t.type||o.text===t.type)) ty.value=t.type;
+    const md=document.getElementById('tv_mode'); if(md&&(t.mode==='Manuel'||t.mode==='Mécanique'))md.value=t.mode;
+    tvFillTypes(t.type);
+    set('tv_debut',t.date_debut||t.date); set('tv_fin',t.date_fin||t.date_debut||t.date); set('tv_h',t.heures); set('tv_comment',t.comment);
+    const keys=(t.parcelles&&t.parcelles.length)?t.parcelles:((t.ilot&&ilot_parcelles[t.ilot])?ilot_parcelles[t.ilot]:[]);
+    const setK=new Set(keys); document.querySelectorAll('.tvParcCk').forEach(cb=>{ if(setK.has(cb.value))cb.checked=true; });
   }
 }
-function tvTypeAuto(){
-  const ty=document.getElementById('tv_type'); if(!ty)return; const t=ty.value; if(!t||t==='__new')return;
-  const m=((meta.travaux_memo)||{})[t]; if(!m)return;
-  const setT=(i,v)=>{const e=document.getElementById(i); if(e)e.value=(v==null?'':v);};
-  setT('tv_mode',m.mode); setT('tv_h',m.heures); setT('tv_ilot',m.ilot);
-}
 function saveTravail(){
-  const g=id=>document.getElementById(id).value;
-  if(!g('tv_date')){toast('Indiquez la date.');return;}
+  const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
+  const debut=g('tv_debut'), fin=g('tv_fin')||debut;
+  if(!debut){toast('Indiquez la date de début.');return;}
+  if(fin&&fin<debut){toast('La date de fin est antérieure à la date de début.');return;}
   if(!(parseFloat(g('tv_h'))>0)){toast('Indiquez la durée en heures.');return;}
+  const mode=g('tv_mode');
   let type=g('tv_type');
   if(type==='__new'){ type=g('tv_new').trim(); if(!type){toast('Indiquez le type d\'intervention.');return;}
-    meta.travaux_types=[...((meta.travaux_types)||[]),type].filter((v,i,a)=>a.indexOf(v)===i); }
-  const _rec={date:g('tv_date'),type,mode:g('tv_mode'),ilot:g('tv_ilot'),heures:g('tv_h'),comment:g('tv_comment').trim()};
-  if(_editTravail){const _t=travaux.find(x=>x.id===_editTravail); if(_t)Object.assign(_t,_rec); _editTravail=null;} else travaux.push({id:'T'+Date.now(),..._rec});
-  meta.travaux_memo=meta.travaux_memo||{};
-  meta.travaux_memo[type]={mode:_rec.mode,heures:_rec.heures,ilot:_rec.ilot};
+    meta.travaux_types_mode=meta.travaux_types_mode||{}; meta.travaux_types_mode[mode]=[...((meta.travaux_types_mode[mode])||[]),type].filter((v,i,a)=>a.indexOf(v)===i); }
+  const parcs=tvSelectedParcs();
+  const _rec={date_debut:debut,date_fin:fin,date:debut,type,mode,parcelles:parcs,heures:g('tv_h'),comment:g('tv_comment').trim()};
+  if(_editTravail){const _t=travaux.find(x=>x.id===_editTravail); if(_t){delete _t.ilot; Object.assign(_t,_rec);} _editTravail=null;} else travaux.push({id:'T'+Date.now(),..._rec});
+  meta.travaux_memo=meta.travaux_memo||{}; meta.travaux_memo[type]={mode,heures:_rec.heures};
   saveDB(); closeModal(); renderTravaux(); toast('Intervention enregistrée ✓');
 }
 function supprTravail(id){ if(confirm('Supprimer cette intervention ?')){travaux=travaux.filter(t=>t.id!==id);saveDB();renderTravaux();toast('Intervention supprimée');} }
+
+/* ===================== STATISTIQUES TRAVAUX ===================== */
+function _svgBars(data,o){ o=o||{}; const W=o.w||540, lblW=o.lblW||180, rh=26; const max=Math.max(1,...data.map(d=>d.v)); const barW=W-lblW-80; const H=data.length*rh+6; let y=6,rows='';
+  data.forEach(d=>{ const w=Math.max(2,d.v/max*barW); rows+=`<g transform="translate(0,${y})"><text x="${lblW-8}" y="14" text-anchor="end" font-size="12" fill="#23302A">${esc(d.label)}</text><rect x="${lblW}" y="2" width="${w.toFixed(1)}" height="16" rx="3" fill="${d.col||'#2E5141'}"></rect><text x="${(lblW+w+6).toFixed(1)}" y="14" font-size="11" fill="#6B7268">${d.disp!=null?d.disp:d.v}</text></g>`; y+=rh; });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px">${rows}</svg>`; }
+function _svgDonut(parts){ const tot=parts.reduce((s,p)=>s+p.v,0)||1; let a=-Math.PI/2; const cx=70,cy=70,r=58,rin=34; let segs='';
+  parts.forEach(p=>{ const ang=p.v/tot*2*Math.PI; const a2=a+ang; const x1=cx+r*Math.cos(a),y1=cy+r*Math.sin(a),x2=cx+r*Math.cos(a2),y2=cy+r*Math.sin(a2); const xi2=cx+rin*Math.cos(a2),yi2=cy+rin*Math.sin(a2),xi1=cx+rin*Math.cos(a),yi1=cy+rin*Math.sin(a); const lg=ang>Math.PI?1:0; segs+=`<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${r} ${r} 0 ${lg} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} L${xi2.toFixed(1)} ${yi2.toFixed(1)} A${rin} ${rin} 0 ${lg} 0 ${xi1.toFixed(1)} ${yi1.toFixed(1)} Z" fill="${p.col}"></path>`; a=a2; });
+  const leg=parts.map(p=>`<div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:11px;height:11px;border-radius:2px;background:${p.col};flex:none"></span>${esc(p.label)} · ${Math.round(p.v/tot*100)}% (${fmt(p.v,1)} h)</div>`).join('');
+  return `<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap"><svg viewBox="0 0 140 140" width="140" height="140">${segs}</svg><div style="display:flex;flex-direction:column;gap:6px">${leg}</div></div>`; }
+function _svgMonths(entries){ const base=150, bw=34, gap=20; const max=Math.max(1,...entries.map(e=>e.v)); let x=30,bars=''; entries.forEach(e=>{ const h=e.v/max*(base-20); bars+=`<g><rect x="${x}" y="${(base-h).toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" rx="3" fill="#2E5141"></rect><text x="${x+bw/2}" y="${base+14}" text-anchor="middle" font-size="10" fill="#6B7268">${esc(e.label)}</text><text x="${x+bw/2}" y="${(base-h-4).toFixed(1)}" text-anchor="middle" font-size="10" fill="#23302A">${e.v?fmt(e.v,0):''}</text></g>`; x+=bw+gap; }); return `<svg viewBox="0 0 ${x} ${base+22}" width="100%" style="max-width:${x}px">${bars}</svg>`; }
+function _svgGantt(rows){ const ds=rows.map(r=>r.s).concat(rows.map(r=>r.e)).filter(Boolean).sort(); if(!ds.length)return '—'; const min=new Date(ds[0]),max=new Date(ds[ds.length-1]); const span=Math.max(1,(max-min)/86400000); const W=620,lblW=200,plot=W-lblW-20,rh=24,H=rows.length*rh+24; const X=d=>lblW+((new Date(d)-min)/86400000)/span*plot; let y=6,body=''; rows.forEach(r=>{ const x1=X(r.s),x2=Math.max(x1+3,X(r.e)); body+=`<g transform="translate(0,${y})"><text x="${lblW-8}" y="13" text-anchor="end" font-size="11.5" fill="#23302A">${esc(r.label)}</text><rect x="${x1.toFixed(1)}" y="2" width="${(x2-x1).toFixed(1)}" height="13" rx="4" fill="${r.col||'#9C7322'}"></rect></g>`; y+=rh; }); body+=`<text x="${lblW}" y="${H-4}" font-size="10" fill="#6B7268">${dateFR(ds[0])}</text><text x="${W-20}" y="${H-4}" text-anchor="end" font-size="10" fill="#6B7268">${dateFR(ds[ds.length-1])}</text>`; return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px">${body}</svg>`; }
+function renderTravauxStats(){
+  if(!travaux.length){ toast('Aucune intervention à analyser.'); return; }
+  const totH=travaux.reduce((s,t)=>s+_tvH(t),0), nb=travaux.length;
+  const byType={},cntType={},modeOfType={};
+  travaux.forEach(t=>{ const k=t.type||'—'; byType[k]=(byType[k]||0)+_tvH(t); cntType[k]=(cntType[k]||0)+1; modeOfType[k]=_tvMode(t); });
+  const colT=k=>modeOfType[k]==='Mécanique'?'#9C7322':'#2E5141';
+  const typeRows=Object.keys(byType).sort((a,b)=>byType[b]-byType[a]).map(k=>({label:k,v:byType[k],disp:fmt(byType[k],1)+' h',col:colT(k)}));
+  const moyRows=Object.keys(byType).sort((a,b)=>(byType[b]/cntType[b])-(byType[a]/cntType[a])).map(k=>({label:k,v:byType[k]/cntType[k],disp:fmt(byType[k]/cntType[k],1)+' h',col:colT(k)}));
+  const byMonth={}; travaux.forEach(t=>{ const k=(_tvDate(t)||'').slice(0,7); if(k)byMonth[k]=(byMonth[k]||0)+_tvH(t); });
+  const monthEntries=Object.keys(byMonth).sort().map(k=>{const[y,m]=k.split('-');return{label:(MOIS[+m-1]||'').slice(0,4)+' '+(y?y.slice(2):''),v:byMonth[k]};});
+  const byMode={}; travaux.forEach(t=>{ const k=_tvMode(t); byMode[k]=(byMode[k]||0)+_tvH(t); });
+  const modeParts=Object.keys(byMode).map(k=>({label:k,v:byMode[k],col:k==='Mécanique'?'#9C7322':(k==='Manuel'?'#2E5141':'#8A2D3B')}));
+  const hByParc={},hByCep={},hByCom={},surfPass={};
+  travaux.forEach(t=>{ const ps=_tvParcs(t); const S=ps.reduce((s,p)=>s+parcellePl(p),0); const H=_tvH(t); surfPass[t.type]=(surfPass[t.type]||0)+(ps.reduce((s,p)=>s+parcellePl(p),0)/100);
+    if(S>0)ps.forEach(p=>{ const share=H*(parcellePl(p)/S); hByParc[p.key]=(hByParc[p.key]||0)+share; const c=p.cep||'—'; hByCep[c]=(hByCep[c]||0)+share; const cm=p.com||'—'; hByCom[cm]=(hByCom[cm]||0)+share; }); });
+  const parcRows=Object.keys(hByParc).map(k=>{const p=parcelles.find(x=>x.key===k);const ha=p?parcellePl(p)/100:0;return{p,hha:ha>0?hByParc[k]/ha:0};}).filter(r=>r.p).sort((a,b)=>b.hha-a.hha).slice(0,12).map(r=>({label:(r.p.id||'')+' · '+(r.p.com||''),v:r.hha,disp:fmt(r.hha,1)+' h/ha'}));
+  const cepRows=Object.keys(hByCep).sort((a,b)=>hByCep[b]-hByCep[a]).map(c=>({label:c,v:hByCep[c],disp:fmt(hByCep[c],1)+' h'}));
+  const comRows=Object.keys(hByCom).sort((a,b)=>hByCom[b]-hByCom[a]).map(c=>({label:c,v:hByCom[c],disp:fmt(hByCom[c],1)+' h'}));
+  const surfRows=Object.keys(surfPass).sort((a,b)=>surfPass[b]-surfPass[a]).map(k=>({label:k,v:surfPass[k],disp:fmt(surfPass[k],2)+' ha',col:colT(k)}));
+  const span={}; travaux.forEach(t=>{ const k=t.type||'—'; const d=_tvDate(t),f=_tvFin(t); if(!span[k])span[k]={s:d,e:f}; else{ if(d&&d<span[k].s)span[k].s=d; if(f&&f>span[k].e)span[k].e=f; } });
+  const ganttRows=Object.keys(span).map(k=>({label:k,s:span[k].s,e:span[k].e,col:colT(k)}));
+  const totSurf=sTotExploit()/100; const globalHha=totSurf>0?totH/totSurf:0;
+  const sec=(t,inner)=>`<div style="margin:16px 0 4px"><div style="font-weight:600;font-size:13px;color:var(--vigne);margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--line)">${t}</div>${inner}</div>`;
+  const card=(k,v)=>`<div style="background:var(--vigne-soft);border-radius:8px;padding:11px 16px;flex:1;min-width:120px"><div style="font-size:12px;color:var(--mute)">${k}</div><div style="font-family:var(--display);font-size:24px;font-weight:600;color:var(--vigne)">${v}</div></div>`;
+  openModal('Statistiques des travaux',`<div style="max-height:74vh;overflow:auto;padding-right:4px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap">${card('Total heures',fmt(totH,1)+' h')}${card('Interventions',nb)}${card('Moyenne / ha',fmt(globalHha,1)+' h/ha')}</div>
+    ${sec('Heures par type d\'intervention',_svgBars(typeRows,{lblW:210}))}
+    ${sec('Manuel vs mécanique',_svgDonut(modeParts))}
+    ${sec('Heures par mois',monthEntries.length?_svgMonths(monthEntries):'<div style="color:var(--mute);font-size:12px">—</div>')}
+    ${sec('Parcelles les plus chronophages (heures / ha)',parcRows.length?_svgBars(parcRows,{lblW:210}):'<div style="color:var(--mute);font-size:12px">Renseignez des parcelles dans les interventions pour activer cette analyse.</div>')}
+    ${sec('Heures par cépage',cepRows.length?_svgBars(cepRows,{lblW:170}):'<div style="color:var(--mute);font-size:12px">—</div>')}
+    ${sec('Heures par commune',comRows.length?_svgBars(comRows,{lblW:170}):'<div style="color:var(--mute);font-size:12px">—</div>')}
+    ${sec('Surface travaillée cumulée par type (hectares-passages)',surfRows.length?_svgBars(surfRows,{lblW:210}):'<div style="color:var(--mute);font-size:12px">—</div>')}
+    ${sec('Durée moyenne d\'une intervention par type',_svgBars(moyRows,{lblW:210}))}
+    ${sec('Frise de campagne (période par type)',ganttRows.length?_svgGantt(ganttRows):'<div style="color:var(--mute);font-size:12px">—</div>')}
+  </div>`);
+}
 async function travauxPDF(){
   if(!travaux.length){toast('Aucune intervention enregistrée.');return;}
   let NS; try{ NS=await loadJsPDF(); }catch(e){ toast(e.message); return; }
@@ -2385,6 +2599,46 @@ async function travauxPDF(){
   const T=s=>String(s==null?'':s);
   const filename='Calendrier_travaux_'+String(meta.campagne||'').replace(/[^0-9A-Za-z]+/g,'')+'_'+String(meta.client||'exploitation').replace(/[^0-9A-Za-z]+/g,'_').slice(0,40)+'.pdf';
   let y=12; const ensure=h=>{ if(y+h>PH-12){doc.addPage();y=14;} };
+  function _pdfBars(title, rows){
+    if(!rows||!rows.length) return;
+    ensure(11);
+    doc.setFont('helvetica','bold');doc.setFontSize(10);tc(C.vigne);doc.text(title,M,y+3);y+=6;
+    const max=Math.max(1,...rows.map(r=>r.v));
+    const lblW=72, valW=24, x0=M+lblW, barMax=CW-lblW-valW-4;
+    rows.forEach(r=>{ ensure(5.2);
+      const bw=Math.max(0.6, r.v/max*barMax);
+      doc.setFont('helvetica','normal');doc.setFontSize(7.2);tc(C.ink);
+      doc.text(doc.splitTextToSize(String(r.label),lblW-3)[0], M, y+3.1);
+      fc(r.col||C.vigne2);doc.rect(x0,y+0.5,bw,3.2,'F');
+      tc(C.mute);doc.setFontSize(6.9);doc.text(String(r.disp),x0+bw+2,y+3.1);
+      y+=5; });
+    y+=3;
+  }
+  function _pdfModeBar(byMode, tot){
+    const keys=['Manuel','Mécanique'].filter(k=>byMode[k]).concat(Object.keys(byMode).filter(k=>k!=='Manuel'&&k!=='Mécanique'));
+    if(!keys.length) return;
+    ensure(16);
+    doc.setFont('helvetica','bold');doc.setFontSize(10);tc(C.vigne);doc.text('Manuel vs mécanique',M,y+3);y+=6;
+    const col={'Manuel':C.vigne2,'Mécanique':C.laiton}; const barW=CW, h=6; let cx=M;
+    keys.forEach(k=>{ const w=byMode[k]/tot*barW; fc(col[k]||C.lie); doc.rect(cx,y,Math.max(0.4,w),h,'F');
+      if(w>16){ doc.setFont('helvetica','bold');doc.setFontSize(7);tc(C.craie); doc.text(k+' '+Math.round(byMode[k]/tot*100)+'%',cx+2,y+4); }
+      cx+=w; });
+    y+=h+3;
+    doc.setFont('helvetica','normal');doc.setFontSize(7);tc(C.mute);
+    doc.text(keys.map(k=>k+' : '+fmt(byMode[k],1)+' h ('+Math.round(byMode[k]/tot*100)+'%)').join('     '),M,y+2); y+=6;
+  }
+  function _pdfGantt(rows){
+    const ds=rows.flatMap(r=>[r.s,r.e]).filter(Boolean).sort(); if(!ds.length) return;
+    const min=new Date(ds[0]),max=new Date(ds[ds.length-1]); const span=Math.max(1,(max-min)/864e5);
+    ensure(11);
+    doc.setFont('helvetica','bold');doc.setFontSize(10);tc(C.vigne);doc.text('Frise de campagne (période par type)',M,y+3);y+=6;
+    const lblW=72,x0=M+lblW,plot=CW-lblW-4; const X=d=>x0+((new Date(d)-min)/864e5)/span*plot;
+    rows.forEach(r=>{ ensure(5.2); doc.setFont('helvetica','normal');doc.setFontSize(7.2);tc(C.ink);
+      doc.text(doc.splitTextToSize(String(r.label),lblW-3)[0],M,y+3.1);
+      const a=X(r.s), b=Math.max(a+1,X(r.e)); fc(r.col||C.laiton); doc.rect(a,y+0.6,b-a,3,'F'); y+=5; });
+    doc.setFontSize(6.5);tc(C.mute);doc.text(dateFR(ds[0]),x0,y+3);doc.text(dateFR(ds[ds.length-1]),M+CW,y+3,{align:'right'});y+=6;
+  }
+
   const sorted=[...travaux].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const hTot=travaux.reduce((s,t)=>s+(+t.heures||0),0);
   const nbMode=m=>travaux.filter(t=>t.mode===m).length;
@@ -2429,9 +2683,9 @@ async function travauxPDF(){
     doc.setFont('helvetica','bold');doc.setFontSize(10);tc(C.vigne);doc.text(titre,M+2,y+4.8);
     doc.setFont('helvetica','normal');doc.setFontSize(7.5);tc(C.mute);doc.text(groups[k].length+' intervention'+(groups[k].length>1?'s':''),PW-M-2,y+4.8,{align:'right'});
     y+=7;
-    const rows=groups[k].map(t=>[dateFR(t.date),T(t.type),T(t.mode),T(t.ilot||'Toute l’exploitation'),t.heures?T(t.heures)+' h':'',T(t.comment)]);
+    const rows=groups[k].map(t=>[T(dateFR(_tvDate(t))+(t.date_fin&&t.date_fin!==_tvDate(t)?(' → '+dateFR(t.date_fin)):'')),T(t.type),T(t.mode),T(_tvParcs(t).map(p=>p.id||p.com||'').join(', ')||(t.ilot||'—')),t.heures?T(t.heures)+' h':'',T(t.comment)]);
     doc.autoTable({startY:y,margin:{left:M,right:M},
-      head:[['Date','Type d’intervention','Mode','Îlot','Heures','Commentaire']],body:rows,theme:'grid',
+      head:[['Période','Type d’intervention','Mode','Parcelles','Heures','Commentaire']],body:rows,theme:'grid',
       styles:{fontSize:8,cellPadding:1.3,overflow:'linebreak',valign:'top',textColor:C.ink,lineColor:[229,231,221],lineWidth:0.1},
       headStyles:{fillColor:C.vigne,textColor:C.craie,fontSize:6.8,fontStyle:'bold'},
       columnStyles:{0:{cellWidth:24},1:{cellWidth:70},2:{cellWidth:28},3:{cellWidth:55},4:{cellWidth:18,halign:'center'},5:{cellWidth:84}}});
@@ -2452,6 +2706,31 @@ async function travauxPDF(){
       columnStyles:{0:{cellWidth:160},1:{cellWidth:40,halign:'center'},2:{cellWidth:40,halign:'center'}}});
     y=doc.lastAutoTable.finalY+6;
   }
+
+  doc.addPage(); y=14;
+  doc.setFont('helvetica','bold');doc.setFontSize(15);tc(C.vigne);doc.text('Statistiques de la campagne',M,y);y+=8;
+  const _totHa=sTotExploit()/100, _moyHa=_totHa>0?hTot/_totHa:0;
+  doc.setFont('helvetica','normal');doc.setFontSize(8.5);tc(C.mute);
+  doc.text('Total : '+fmt(hTot,1)+' h     ·     '+travaux.length+' interventions     ·     moyenne '+fmt(_moyHa,1)+' h/ha sur '+fmt(_totHa,2)+' ha',M,y);y+=8;
+  const _byType={},_cnt={},_modeT={};
+  travaux.forEach(t=>{const k=t.type||'—';_byType[k]=(_byType[k]||0)+_tvH(t);_cnt[k]=(_cnt[k]||0)+1;_modeT[k]=_tvMode(t);});
+  const _colT=k=>_modeT[k]==='Mécanique'?C.laiton:C.vigne2;
+  _pdfBars('Heures par type d\'intervention',Object.keys(_byType).sort((a,b)=>_byType[b]-_byType[a]).map(k=>({label:k,v:_byType[k],disp:fmt(_byType[k],1)+' h',col:_colT(k)})));
+  const _byMode={};travaux.forEach(t=>{const k=_tvMode(t);_byMode[k]=(_byMode[k]||0)+_tvH(t);});
+  _pdfModeBar(_byMode,hTot||1);
+  const _byMonth={};travaux.forEach(t=>{const k=(_tvDate(t)||'').slice(0,7);if(k)_byMonth[k]=(_byMonth[k]||0)+_tvH(t);});
+  _pdfBars('Heures par mois',Object.keys(_byMonth).sort().map(k=>{const a=k.split('-');return{label:(MOIS[+a[1]-1]||'')+' '+a[0],v:_byMonth[k],disp:fmt(_byMonth[k],1)+' h',col:C.vigne2};}));
+  const _hP={},_hCep={},_hCom={},_surf={};
+  travaux.forEach(t=>{const ps=_tvParcs(t);const S=ps.reduce((s,p)=>s+parcellePl(p),0);const H=_tvH(t);_surf[t.type]=(_surf[t.type]||0)+(ps.reduce((s,p)=>s+parcellePl(p),0)/100);
+    if(S>0)ps.forEach(p=>{const sh=H*(parcellePl(p)/S);_hP[p.key]=(_hP[p.key]||0)+sh;const c=p.cep||'—';_hCep[c]=(_hCep[c]||0)+sh;const cm=p.com||'—';_hCom[cm]=(_hCom[cm]||0)+sh;});});
+  const _parcRows=Object.keys(_hP).map(k=>{const p=parcelles.find(x=>x.key===k);const ha=p?parcellePl(p)/100:0;return{p,hha:ha>0?_hP[k]/ha:0};}).filter(r=>r.p).sort((a,b)=>b.hha-a.hha).slice(0,12).map(r=>({label:(r.p.ld||r.p.id||r.p.com||'—'),v:r.hha,disp:fmt(r.hha,1)+' h/ha',col:C.vigne2}));
+  _pdfBars('Parcelles les plus chronophages (heures / ha)',_parcRows);
+  _pdfBars('Heures par cépage',Object.keys(_hCep).sort((a,b)=>_hCep[b]-_hCep[a]).map(c=>({label:c,v:_hCep[c],disp:fmt(_hCep[c],1)+' h',col:C.vigne2})));
+  _pdfBars('Heures par commune',Object.keys(_hCom).sort((a,b)=>_hCom[b]-_hCom[a]).map(c=>({label:c,v:_hCom[c],disp:fmt(_hCom[c],1)+' h',col:C.vigne2})));
+  _pdfBars('Surface travaillée cumulée par type (hectares-passages)',Object.keys(_surf).sort((a,b)=>_surf[b]-_surf[a]).map(k=>({label:k,v:_surf[k],disp:fmt(_surf[k],2)+' ha',col:_colT(k)})));
+  _pdfBars('Durée moyenne d\'une intervention par type',Object.keys(_byType).map(k=>({label:k,v:_byType[k]/_cnt[k],disp:fmt(_byType[k]/_cnt[k],1)+' h',col:_colT(k)})).sort((a,b)=>b.v-a.v));
+  const _span={};travaux.forEach(t=>{const k=t.type||'—';const d=_tvDate(t),f=_tvFin(t);if(!_span[k])_span[k]={s:d,e:f};else{if(d&&d<_span[k].s)_span[k].s=d;if(f&&f>_span[k].e)_span[k].e=f;}});
+  _pdfGantt(Object.keys(_span).map(k=>({label:k,s:_span[k].s,e:_span[k].e,col:_colT(k)})));
 
   ensure(26);
   doc.setFont('helvetica','normal');doc.setFontSize(7.4);tc(C.mute);
@@ -3062,7 +3341,12 @@ function openSettings(){
    <div class="field"><label>Changer mon mot de passe</label><input id="setPwd" type="password" placeholder="Nouveau mot de passe (min. 6 caractères)"></div>
    <button class="btn btn-o" onclick="changePwd()">Mettre à jour le mot de passe</button>
    <div style="border-top:1px solid var(--line);margin:18px 0"></div>
-   <div style="font-size:12px;color:var(--mute);margin-bottom:10px">Réinitialiser efface parcelles, îlots et passages de ce compte (sauvegarde JSON conseillée avant, via le Bilan).</div>
+   <div style="font-weight:600;color:var(--vigne);margin-bottom:6px">Sauvegarde de mes données</div>
+   <div style="font-size:12px;color:var(--mute);margin-bottom:10px">Téléchargez une copie complète de ce dossier — parcelles, passages, travaux, fumure et stocks — à conserver précieusement. Recommandé avant toute opération importante.</div>
+   <div class="row"><button class="btn btn-l" onclick="exportJSON()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Exporter toutes mes données</button>
+   <button class="btn btn-o" onclick="if(confirm('Restaurer remplacera les données du dossier actuellement ouvert par celles du fichier. Continuer ?'))importJSON()">Restaurer depuis un fichier…</button></div>
+   <div style="border-top:1px solid var(--line);margin:18px 0"></div>
+   <div style="font-size:12px;color:var(--mute);margin-bottom:10px">Réinitialiser efface parcelles, îlots et passages de ce compte (exportez d'abord une sauvegarde ci-dessus).</div>
    <div class="row"><button class="btn btn-o" onclick="if(confirm('Repartir d\\'un modèle vierge ? Les données de ce compte seront effacées.')){seedDB();closeModal();go('dash');toast('Modèle vierge');}">Modèle vierge</button>
    <button class="btn btn-o" onclick="if(confirm('Charger le jeu d\\'exemple (HOTTE BIFFROTEAUX) ?')){chargerExemple();closeModal();go('dash');toast('Exemple chargé');}">Charger l'exemple</button></div>`);
 }
