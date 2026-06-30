@@ -2501,24 +2501,51 @@ function analyserBon(text){
   for(const l of lignes.slice(0,6)){ if(/\d{2}[\/.]\d{2}/.test(l))continue; if(/bon|livraison|facture|date|page|n°|adresse/i.test(l))continue; if(l.replace(/[^A-Za-zÀ-ÿ]/g,'').length>=4){fournisseur=l.slice(0,40);break;} }
   return {produit,qte,unite,lot,fournisseur};
 }
-function lireBonLivraison(){
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.capture='environment';
-  inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
-    const rd=new FileReader();
-    rd.onload=async()=>{ let T; try{ T=await loadTesseract(); }catch(e){ toast(e.message); return; }
-      toast('Analyse de l\'image en cours… (quelques secondes)');
-      try{ const {data}=await T.recognize(rd.result,'fra');
-        const r=analyserBon(data.text||'');
-        ouvrirEntreeStock({nom:r.produit,qte:r.qte,unite:r.unite,fournisseur:r.fournisseur,lot:r.lot,_ocr:true});
-        const found=[r.produit&&'produit',r.qte&&'quantité',r.lot&&'lot',r.fournisseur&&'fournisseur'].filter(Boolean);
-        toast(found.length?('Détecté : '+found.join(', ')+' — à vérifier'):'Texte lu — complétez les champs');
-      }catch(e){ toast('Lecture impossible : '+(e.message||e)); } };
-    rd.readAsDataURL(f); };
+function _fileToDataURL(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('lecture image impossible')); r.readAsDataURL(f); }); }
+let _ocrPages=[];
+function lireBonLivraison(){ _ocrPages=[]; _ocrPrendrePhoto(); }
+function _ocrPrendrePhoto(){
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='image/*'; inp.setAttribute('capture','environment');   // ouvre l'appareil photo
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0];
+    if(f) _ocrPages.push(f);
+    if(_ocrPages.length) _ocrModalPages(); };
   inp.click();
+}
+function _ocrModalPages(){
+  const n=_ocrPages.length;
+  openModal('Photographier le bon', `
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--vigne);margin-bottom:6px">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <b>${n} page${n>1?'s':''}</b> prise${n>1?'s':''}</div>
+    <div style="font-size:12px;color:var(--mute);margin-bottom:12px">Ajoutez les éventuelles pages suivantes du bon, puis lancez l'analyse.</div>
+    <div class="row">
+      <button class="btn btn-o" style="flex:1;justify-content:center" onclick="_ocrPrendrePhoto()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter une page</button>
+      <button class="btn btn-g" style="flex:2;justify-content:center" onclick="_ocrLancer()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Analyser ${n} page${n>1?'s':''}</button>
+    </div>`);
+}
+async function _ocrLancer(){
+  const files=_ocrPages.slice(); if(!files.length)return;
+  let T; try{ T=await loadTesseract(); }catch(e){ toast(e.message); return; }
+  closeModal(); toast('Analyse de '+files.length+' page'+(files.length>1?'s':'')+' en cours… (quelques secondes par page)');
+  try{
+    let txt='';
+    for(const f of files){ const url=await _fileToDataURL(f); const {data}=await T.recognize(url,'fra'); txt+=(data.text||'')+'\n'; }
+    const lignes=txt.split('\n').map(s=>s.replace(/\s+/g,' ').trim()).filter(Boolean);
+    _blRaw=lignes;
+    const distrib=_detecterDistrib(lignes);
+    let res = distrib==='compas'?_parseCompasBL(lignes) : distrib==='cazorla'?_parseCazorlaBL(lignes) : [];
+    if(!res.length) res=_parseGeneriqueBL(lignes);
+    res=res.filter(l=>l.qte!=null && l.qte>0 && (l.produit||'').trim());
+    if(!res.length){ _blDiagnostic(lignes); return; }
+    res.forEach(l=>{ const m=_matchProduitLigne(l); l.reconnu=!!m;
+      if(m){ if(!l.produit)l.produit=m.n; if(m.amm&&!l.amm)l.amm=m.amm; } if(!l.unite)l.unite=''; });
+    _blLignes=res; previewBL(distrib);
+  }catch(e){ toast('Lecture impossible : '+(e.message||e)); }
 }
 
 /* ===================== IMPORT BON DE LIVRAISON / FACTURE (PDF) ===================== */
-let _blLignes=[], _blInclus=[], _blFour='', _blDateAchat='', _blManquants=[];
+let _blLignes=[], _blInclus=[], _blFour='', _blDateAchat='', _blManquants=[], _blRaw=[];
 const _BL_UNITS=['L','kg','g','mL','cL','hL','dose'];
 
 function _uniteCanon(u){ u=(u||'').toLowerCase().trim();
@@ -2531,7 +2558,7 @@ function _uniteCanon(u){ u=(u||'').toLowerCase().trim();
   if(/^hl/.test(u))return 'hL';
   return ''; }
 function _num(s){ const v=parseFloat(String(s).replace(/\s/g,'').replace(/,/g,'')); return isFinite(v)?v:null; }
-function _normDateFr(d){ const m=String(d).match(/(\d{2})-(\d{2})-(\d{2})/); return m?('20'+m[3]+'-'+m[2]+'-'+m[1]):''; }
+function _normDateFr(d){ const m=String(d).match(/(\d{2})[-.\/](\d{2})[-.\/](\d{2})/); return m?('20'+m[3]+'-'+m[2]+'-'+m[1]):''; }
 
 /* Texte du PDF regroupé en lignes (par coordonnée verticale) */
 async function _pdfTexteLignes(buf){
@@ -2548,7 +2575,7 @@ async function _pdfTexteLignes(buf){
   return out;
 }
 function _detecterDistrib(lignes){ const t=lignes.join(' ').toUpperCase();
-  if(/CAZORLA/.test(t))return 'cazorla';
+  if(/CAZORLA|FABRICACI|INTRACOMUNITARIA|REG\.?\s*OFICIAL/.test(t))return 'cazorla';
   if(/COMPAS/.test(t))return 'compas';
   return 'generique'; }
 
@@ -2556,7 +2583,7 @@ function _detecterDistrib(lignes){ const t=lignes.join(' ').toUpperCase();
 function _parseCompasBL(lignes){
   const out=[]; let cur=null;
   const NOISE=/utilisable en agriculture|RUE 2018|BON DE LIVRAISON|Code (Client|Article)|^No B\.P|^Date B\.P|Désignation|^compas|COMPAS S\.A\.S|Observations|Technico|Livré par|Quantité.*Unité/i;
-  const numRe=/(?:Num[ée]ro\s+)?([A-Z0-9]{4,})\s*\|\s*(\d{2}-\d{2}-\d{2})\s*Qte\s*:\s*([\d.,]+)/i;
+  const numRe=/(?:Num[ée]ro\s+)?([A-Z0-9]{4,})\s*[|Il1\/]?\s*(\d{2}[-.\/]\d{2}[-.\/]\d{2})\s*Q[tT][eé]?\s*:?\s*([\d.,]+)/i;
   const UNI=/\b(Litre|Kilo|Tonne|Kg|kg|Bidon|Dose|Sac|Gramme|g|mL|L)\b/;
   for(const ln of lignes){
     const m=ln.match(numRe);
@@ -2574,36 +2601,65 @@ function _parseCompasBL(lignes){
 }
 /* Parseur CAZORLA : ligne « DESC <code douanier 8> paquets kgs/paq TOTAL pvp import iva » + N°Lot + NomAMM/PCP */
 function _parseCazorlaBL(lignes){
-  const out=[]; let cur=null;
-  const prodRe=/^(.+?)\s+(\d{8})\s+([\d.,]+(?:\s+[\d.,]+){2,})/;
+  const out=[]; let cur=null, prev='';
+  const hsRe=/(\d{8})\s+([\d.,]+(?:\s+[\d.,]+){2,})/;
   const lotRe=/N[ºo°]?\s*Lot\s*Fabricaci[óo]\s*:?\s*([A-Z0-9_]+)/i;
-  const ammRe=/^(.+?)\s+(AMM|PCP)\s*:?\s*([0-9A-Z\-]+)/i;
+  const ammRe=/^(.+?)\s+(AMM|PCP)\s*:?\s*([0-9A-Z\-]+)\s*$/i;
   const UNI=/(\d+(?:[.,]\d+)?)\s*(Kg|kg|L|l|g|Ha|mL|cc)\b/;
-  const push=()=>{ if(cur)out.push(cur); };
+  const NOISE=/utilisable en|agriculture biolog|Reglement|Fertilit|norme UNE|conforme|N[ºo°]\s*Reg|OPERACION|Transport|agrement|BASES|IMPORT|DESCRIP|Carnet|CODI|ALB/i;
+  const push=()=>{ if(cur && cur.qte!=null) out.push(cur); };
   for(const ln of lignes){
-    const pm=ln.match(prodRe);
-    if(pm && /^\d{8}$/.test(pm[2])){
+    const hm=ln.match(hsRe);
+    if(hm){
       push();
-      const desc=pm[1].replace(/\s*\(\s*$/,'').replace(/\*+\s*$/,'').trim();
-      const nums=(pm[3].match(/[\d.,]+/g)||[]);
-      const total=nums.length>=3?_num(nums[2]):(nums.length?_num(nums[nums.length-1]):null);
-      const um=desc.match(UNI);
-      cur={produit:desc, qte:total, unite:um?_uniteCanon(um[2]):'', lot:'', amm:'', distrib:'CAZORLA'};
-      continue;
+      let desc=ln.slice(0,hm.index).replace(/\s*\(\s*$/,'').replace(/\*+\s*$/,'').trim();
+      if(desc.replace(/[^A-Za-z]/g,'').length<3) desc=prev;     // description sur la ligne précédente
+      const afterHS=ln.slice(hm.index+hm[1].length);
+      const glued=afterHS.replace(/\s*\.\s*/g,'.');              // recolle « 15 .00 »→« 15.00 », « 468. 00 »→« 468.00 »
+      const decs=glued.match(/\d[\d,]*\.\d+/g)||[];              // colonnes : KGS/PAQ, TOTAL, PVP, IMPORT
+      const total=decs.length>=2?_num(decs[1]):(decs.length?_num(decs[0]):null); // 2e décimale = TOTAL
+      const um=(desc||'').match(UNI);
+      cur={produit:desc||'', qte:total, unite:um?_uniteCanon(um[2]):'', lot:'', amm:'', distrib:'CAZORLA'};
+      prev=''; continue;
     }
-    if(!cur) continue;
-    const lm=ln.match(lotRe); if(lm)cur.lot=lm[1];
+    const lm=ln.match(lotRe); if(lm && cur){ cur.lot=lm[1]; }
     const am=ln.match(ammRe);
-    if(am){ const nom=am[1].replace(/^N[ºo°].*?:/,'').trim();
+    if(am && cur){ const nom=am[1].trim();
       if(/AMM/i.test(am[2])){ cur.amm=am[3]; if(nom&&nom.length<40)cur.produit=nom; }
       else { cur.pcp=am[3]; if(nom&&nom.length<40)cur.produit=nom; } }
+    if(!hm && !lm && !(am&&cur) && !NOISE.test(ln) && ln.replace(/[^A-Za-z]/g,'').length>=3){ prev=ln; }
   }
   push();
   return out.filter(l=>l.qte!=null);
 }
+/* Moteur GÉNÉRIQUE adaptatif : marche sans modèle de distributeur.
+   Identité produit via e-phy (nom/AMM) + lot/AMM par mots-clés + quantité au mieux (nombre+unité). */
+function _parseAdaptatifBL(lignes){
+  const out=[]; let prev='';
+  const NOISE=/sous-total|^total\b|t\.?v\.?a\b|montant|net à payer|transport|iban|siret|t[ée]l\b|^adresse|^facture\b|^bon de livraison|^page|signature|conditions|intracomunitaria|reglement|^date\b|^observ/i;
+  const UNITsrc='(\\d+(?:[.,]\\d+)?)\\s*(litres?|l|kgs?|kilos?|kg|grammes?|gr|g|tonnes?|t|ml|cl|hl|doses?|bidons?|sacs?|ha)\\b';
+  const lotRe=/(?:n[°ºo.\s]*lot|lot\b|lote|batch|fabricaci[óo])\s*[:.]?\s*([A-Za-z0-9][A-Za-z0-9_\-\/]{2,})/i;
+  const ammRe=/\bAMM\s*[:.]?\s*(\d{6,7})\b/i;
+  for(const ln of lignes){
+    if(NOISE.test(ln)){ prev=''; continue; }
+    const amm=(ln.match(ammRe)||[])[1]||'';
+    const match=_matchProduitLigne({produit:ln, amm});
+    const qs=[]; const re=new RegExp(UNITsrc,'gi'); let m;
+    while((m=re.exec(ln))){ const v=_num(m[1]); if(v!=null) qs.push({val:v, unite:_uniteCanon(m[2])}); }
+    if(!match && !qs.length){ if(ln.replace(/[^A-Za-zÀ-ÿ]/g,'').length>=4) prev=ln; continue; }
+    let nom = match?match.n : ln.replace(new RegExp(UNITsrc,'gi'),' ').replace(/\b(lot|lote|batch|fabricaci[oó]|amm|n[°ºo]?\s*reg)\b.*$/i,' ').replace(/\b\d[\d.,]*\b/g,' ').replace(/[^A-Za-zÀ-ÿ .\-]/g,' ').replace(/\s+/g,' ').trim();
+    if(nom.replace(/[^A-Za-z]/g,'').length<3 && prev) nom=prev;
+    let qte=null, unite='';
+    if(qs.length){ const best=qs.reduce((a,b)=>b.val>=a.val?b:a); qte=best.val; unite=best.unite; }
+    out.push({produit:nom, qte, unite, lot:(ln.match(lotRe)||[])[1]||'', amm:(match&&match.amm)||amm, distrib:'AUTRE'});
+    prev='';
+  }
+  return out.filter(l=>l.produit && l.qte!=null && l.qte>0);
+}
 function _parseGeneriqueBL(lignes){
-  /* repli : on tente l'ancre COMPAS, sinon rien d'exploitable automatiquement */
-  return _parseCompasBL(lignes);
+  /* on tente l'adaptatif ET les profils précis, on garde le résultat le plus riche */
+  const cands=[_parseAdaptatifBL(lignes), _parseCazorlaBL(lignes), _parseCompasBL(lignes)];
+  return cands.sort((a,b)=>b.length-a.length)[0];
 }
 /* Correspondance e-phy : par AMM, sinon par nom (tokens) ; renvoie {n, amm} ou null */
 function _matchProduitLigne(line){
@@ -2624,17 +2680,29 @@ function importBonPDF(){
     const rd=new FileReader();
     rd.onload=async()=>{ try{
         const lignes=await _pdfTexteLignes(rd.result);
+        _blRaw=lignes;
         const distrib=_detecterDistrib(lignes);
-        let res = distrib==='cazorla'?_parseCazorlaBL(lignes) : distrib==='compas'?_parseCompasBL(lignes) : _parseGeneriqueBL(lignes);
+        let res = distrib==='cazorla'?_parseCazorlaBL(lignes) : distrib==='compas'?_parseCompasBL(lignes) : [];
+        if(!res.length) res=_parseGeneriqueBL(lignes);
         res=res.filter(l=>l.qte!=null && l.qte>0 && (l.produit||'').trim());
-        if(!res.length){ toast('Aucune ligne produit détectée — format non reconnu pour l\'instant.'); return; }
-        // pré-correspondance e-phy
-        res.forEach(l=>{ const m=_matchProduitLigne(l); l.reconnu=!!m; if(m)l.produit=m.n; if(m&&m.amm)l.amm=m.amm; if(!l.unite)l.unite=''; });
+        if(!res.length){ _blDiagnostic(lignes); return; }
+        // correspondance e-phy : on CONSERVE le nom commercial du document ; l'AMM relie les données réglementaires
+        res.forEach(l=>{ const m=_matchProduitLigne(l); l.reconnu=!!m; if(m&&!l.produit)l.produit=m.n; if(m&&m.amm&&!l.amm)l.amm=m.amm; if(!l.unite)l.unite=''; });
         _blLignes=res;
         previewBL(distrib);
       }catch(e){ toast('Lecture impossible : '+(e.message||e)); } };
     rd.readAsArrayBuffer(f); };
   inp.click();
+}
+function _blDiagnostic(lignes){
+  const n=(lignes||[]).length;
+  const corps = n
+    ? `<pre style="max-height:55vh;overflow:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;background:var(--vigne-soft);padding:10px;border-radius:8px;color:var(--encre)">${esc(lignes.slice(0,80).map((l,i)=>((i+1)+'. '+l)).join('\n'))}</pre>`
+    : `<div style="padding:12px;color:var(--lie);font-size:13px">Aucun texte extrait : ce PDF est probablement un <b>scan (image)</b>, sans couche de texte. Il faudra alors passer par la lecture <b>photo (OCR)</b>.</div>`;
+  openModal('Bon non reconnu — diagnostic', `
+    <div class="alert info" style="margin-bottom:12px;font-size:12.5px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
+      <div>Le PDF a été lu mais aucune ligne produit n'a été reconnue.${n?' Voici les '+Math.min(n,80)+' premières lignes extraites — fais-en une capture et envoie-la, j\'ajusterai la reconnaissance à ce format précis.':''}</div></div>
+    ${corps}`);
 }
 function previewBL(distrib){
   const today=new Date().toISOString().slice(0,10);
@@ -2656,8 +2724,10 @@ function previewBL(distrib){
       <div class="field"><label>Date d'achat (à défaut de date de fabrication)</label><input id="bl_dateachat" type="date" value="${today}"></div></div>
     <div class="tbl-wrap"><table style="font-size:12.5px"><thead><tr><th>✓</th><th>Produit</th><th>N° lot</th><th>Date fab.</th><th>Qté</th><th>Unité</th></tr></thead><tbody>${rows}</tbody></table></div>
     <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:12px" onclick="validerBL()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Valider et créer les entrées</button>
+    <button class="btn btn-o" style="width:100%;justify-content:center;margin-top:8px;font-size:12px" onclick="_blDiagnostic(_blRaw)">Voir le texte extrait (diagnostic)</button>
   </div>`);
 }
+let _blQueue=[], _blStep=0;
 function validerBL(){
   const g=id=>document.getElementById(id);
   _blFour=g('bl_four').value.trim(); _blDateAchat=g('bl_dateachat').value;
@@ -2666,40 +2736,99 @@ function validerBL(){
     const nom=g('bl_p'+i).value.trim(); const q=_num(g('bl_q'+i).value);
     if(!nom||!(q>0))return;
     _blInclus.push({ produit:nom, lot:g('bl_lot'+i).value.trim(), dateFab:g('bl_fab'+i).value,
-      qte:q, unite:g('bl_u'+i).value, amm:l.amm||'' });
+      qte:q, unite:g('bl_u'+i).value, amm:l.amm||'', composants:null });
   });
   if(!_blInclus.length){ toast('Aucune ligne sélectionnée.'); return; }
-  // produits non reconnus (ni e-phy ni déjà créés) → à créer
-  const seen=new Set(); _blManquants=[];
-  _blInclus.forEach(l=>{ const m=_matchProduitLigne(l); l._reconnu=!!m; if(m)l.produit=m.n;
-    if(!m){ const k=l.produit.toUpperCase(); if(!seen.has(k)){ seen.add(k); _blManquants.push(l.produit); } } });
-  if(_blManquants.length){ _blFormManquant(0); } else { _blCreerEntrees(); }
+  // file d'étapes : packs (saisie des composants) + produits non reconnus (création)
+  _blQueue=[]; const vus=new Set();
+  _blInclus.forEach(l=>{ const m=_matchProduitLigne(l); l._reconnu=!!m;
+    if(/\bpack\b/i.test(l.produit)){ _blQueue.push({kind:'pack', line:l, nom:l.produit}); }
+    else if(!m){ const k=l.produit.toUpperCase(); if(!vus.has(k)){ vus.add(k); _blQueue.push({kind:'produit', line:l, nom:l.produit}); } }
+  });
+  _blStep=0;
+  if(_blQueue.length) _blFormEtape(0); else _blCreerEntrees();
 }
-function _blFormManquant(i){
-  if(i>=_blManquants.length){ _blCreerEntrees(); return; }
-  const nom=_blManquants[i];
-  openModal(`Créer le produit (${i+1}/${_blManquants.length})`, `
-    <div class="alert info" style="margin-bottom:12px;font-size:12.5px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-      <div>Ce produit n'est pas dans la base e-phy. Complétez sa fiche (la spécialité est pré-remplie), puis « Créer et suivant ». Vous pouvez aussi « Passer » pour le créer plus tard.</div></div>
-    <div id="formProduit"></div>
-    <div class="row" style="margin-top:8px">
-      <button class="btn btn-o" style="flex:1;justify-content:center" onclick="_blFormManquant(${i+1})">Passer</button>
-      <button class="btn btn-g" style="flex:2;justify-content:center" onclick="_blSaveManquant(${i})"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Créer et suivant</button>
-    </div>`);
-  renderFormProduit({n:nom});
+function _blEtapeSuivante(){ _blFormEtape(_blStep+1); }
+function _blFormEtape(i){
+  _blStep=i;
+  if(i>=_blQueue.length){ _blCreerEntrees(); return; }
+  const item=_blQueue[i];
+  openModal(`Produit non listé (${i+1}/${_blQueue.length})`, `
+    <div style="font-weight:600;color:var(--vigne);margin-bottom:8px">${esc(item.nom)}</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:12px;cursor:pointer;background:var(--vigne-soft);padding:9px 11px;border-radius:8px">
+      <input type="checkbox" id="bl_isPack" ${item.kind==='pack'?'checked':''} onchange="_blTogglePack()">
+      <span>Ce produit est un <b>pack</b> — saisir séparément les spécialités qui le composent</span></label>
+    <div id="bl_etapeBody"></div>`);
+  _blTogglePack();
 }
-function _blSaveManquant(i){
+function _blTogglePack(){
+  const item=_blQueue[_blStep];
+  const isPack=document.getElementById('bl_isPack').checked;
+  const body=document.getElementById('bl_etapeBody');
+  if(isPack){
+    item.kind='pack'; item.line.composants=item.line.composants||[];
+    const names=[...new Set([...EPHY.map(p=>p.n),...getProduitsPerso().map(p=>p.n)])];
+    const dl=names.map(n=>`<option value="${esc(n)}">`).join('');
+    body.innerHTML=`
+      <div style="font-size:12px;color:var(--mute);margin-bottom:8px">Ajoutez chaque produit composant le pack avec sa quantité — chacun deviendra une entrée de stock.</div>
+      <div class="row"><div class="field" style="flex:2"><label>Produit</label><input id="pk_nom" list="pk_dl" placeholder="Spécialité…"><datalist id="pk_dl">${dl}</datalist></div>
+        <div class="field"><label>Qté</label><input id="pk_qte" type="number" step="0.001"></div>
+        <div class="field"><label>Unité</label><select id="pk_u">${_BL_UNITS.map(u=>`<option>${u}</option>`).join('')}</select></div></div>
+      <button class="btn btn-o" style="width:100%;justify-content:center;margin-bottom:8px" onclick="_blAddComposant()"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Ajouter ce composant</button>
+      <div id="pk_liste"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn btn-o" style="flex:1;justify-content:center" onclick="_blEtapeSuivante()">Passer</button>
+        <button class="btn btn-g" style="flex:2;justify-content:center" onclick="_blFinPack()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Terminer le pack et suivant</button></div>`;
+    _blRenderComposants();
+  } else {
+    item.kind='produit'; item.line.composants=null;
+    body.innerHTML=`
+      <div style="font-size:12px;color:var(--mute);margin-bottom:8px">Ce produit n'est pas dans la base e-phy. Complétez sa fiche (spécialité pré-remplie), ou « Passer » pour le créer plus tard.</div>
+      <div id="formProduit"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-o" style="flex:1;justify-content:center" onclick="_blEtapeSuivante()">Passer</button>
+        <button class="btn btn-g" style="flex:2;justify-content:center" onclick="_blSaveProduit()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Créer et suivant</button></div>`;
+    renderFormProduit({n:item.nom});
+  }
+}
+function _blAddComposant(){
+  const n=document.getElementById('pk_nom').value.trim();
+  const q=_num(document.getElementById('pk_qte').value);
+  const u=document.getElementById('pk_u').value;
+  if(!n||!(q>0)){ toast('Indiquez un produit et une quantité.'); return; }
+  const item=_blQueue[_blStep]; item.line.composants=item.line.composants||[];
+  item.line.composants.push({n,qte:q,unite:u});
+  document.getElementById('pk_nom').value=''; document.getElementById('pk_qte').value='';
+  document.getElementById('pk_nom').focus();
+  _blRenderComposants();
+}
+function _blRenderComposants(){
+  const item=_blQueue[_blStep]; const list=item.line.composants||[];
+  const el=document.getElementById('pk_liste'); if(!el)return;
+  el.innerHTML=list.length?('<div style="font-size:11px;color:var(--mute);margin-bottom:4px">Composants du pack :</div>'+list.map((c,j)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 9px;background:var(--craie);border:1px solid var(--line);border-radius:6px;margin-bottom:4px;font-size:13px"><span><b>${esc(c.n)}</b> — ${esc(c.qte)} ${esc(c.unite)}</span><button class="iconbtn btn-danger" style="padding:2px 7px" onclick="_blRmComposant(${j})">✕</button></div>`).join('')):'<div style="font-size:12px;color:var(--mute)">Aucun composant ajouté pour l\'instant.</div>';
+}
+function _blRmComposant(j){ const item=_blQueue[_blStep]; (item.line.composants||[]).splice(j,1); _blRenderComposants(); }
+function _blFinPack(){
+  const item=_blQueue[_blStep];
+  if(!item.line.composants||!item.line.composants.length){ toast('Ajoutez au moins un composant, ou cliquez « Passer ».'); return; }
+  _blEtapeSuivante();
+}
+function _blSaveProduit(){
   const prod=_lireFormProduit(); if(!prod)return;
   if(!meta.produits_perso) meta.produits_perso=[];
   meta.produits_perso.push(prod); saveDB();
-  _blFormManquant(i+1);
+  _blEtapeSuivante();
 }
 function _blCreerEntrees(){
-  let nb=0;
+  let nb=0; const stamp=Date.now();
   _blInclus.forEach((l,k)=>{
-    stock_entrees.push({ id:'E'+Date.now()+'_'+k, date:(l.dateFab||_blDateAchat),
-      n:l.produit, qte:l.qte, unite:l.unite, fournisseur:_blFour, lot:l.lot, dateFab:l.dateFab||'' });
-    nb++;
+    if(l.composants && l.composants.length){
+      l.composants.forEach((c,j)=>{ stock_entrees.push({ id:'E'+stamp+'_'+k+'_'+j, date:(l.dateFab||_blDateAchat),
+        n:c.n, qte:c.qte, unite:c.unite, fournisseur:_blFour, lot:l.lot, dateFab:l.dateFab||'' }); nb++; });
+    } else {
+      stock_entrees.push({ id:'E'+stamp+'_'+k, date:(l.dateFab||_blDateAchat),
+        n:l.produit, qte:l.qte, unite:l.unite, fournisseur:_blFour, lot:l.lot, dateFab:l.dateFab||'' }); nb++;
+    }
   });
   saveDB(); closeModal(); renderStocks(); go('stocks');
   toast(nb+' entrée'+(nb>1?'s':'')+' de stock créée'+(nb>1?'s':'')+' ✓');
