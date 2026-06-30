@@ -219,7 +219,11 @@ tbody tr:hover{background:var(--craie)}
     <div class="ctx" id="ctxBar">
       <span id="ctxConsultantLabel" style="display:none;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--laiton-soft);font-weight:600">Mode consultant</span>
       <span id="ctxClientSpan">Client <b id="ctxClient">—</b></span>
-      <span>Campagne</span><input id="ctxCamp" maxlength="9" oninput="meta.campagne=this.value;saveDB()">
+      <span>Campagne</span>
+      <button class="iconbtn" title="Campagne précédente" onclick="changerCampagneRel(-1)" style="padding:3px 9px;min-width:0">‹</button>
+      <select id="ctxCamp" onchange="changerCampagne(this.value)" style="padding:4px 6px;border-radius:8px"></select>
+      <button class="iconbtn" title="Campagne suivante" onclick="changerCampagneRel(1)" style="padding:3px 9px;min-width:0">›</button>
+      <button class="iconbtn" title="Ajouter une campagne" onclick="ajouterCampagne()" style="padding:3px 9px;min-width:0">+</button>
     </div>
     <button id="roReturn" class="iconbtn" style="display:none;background:var(--laiton);color:#fff;font-size:12px;font-weight:600;padding:6px 12px;gap:6px" onclick="returnToOwn()">⟲ Dossier <span id="roLabel"></span> — revenir à mes clients</button>
     <button class="iconbtn" title="Plein écran" onclick="toggleFullscreen()">
@@ -351,43 +355,20 @@ const PAYWALL_ACTIF = false;
 let parcelles=[], ilots=[], ilot_parcelles={}, passages=[], meta={client:'',campagne:String(new Date().getFullYear())};
 let stock_entrees=[];
 let travaux=[], fumure=[];
+let campagnes={};   /* données annuelles : {"2025":{passages,travaux,fumure}, ...} */
+let _preMig=null;   /* filet de sécurité : copie du dossier avant migration multi-campagnes */
 let session=null, isConsultant=false, readonly=false, viewingLabel='', viewingUid=null;
 
 /* ===================== PERSISTANCE CLOUD ===================== */
 async function loadDB(uid){
   uid=uid||session?.user?.id;
   parcelles=[];ilots=[];ilot_parcelles={};passages=[];meta={client:'',campagne:String(new Date().getFullYear())};
-  stock_entrees=[]; travaux=[]; fumure=[];
+  stock_entrees=[]; travaux=[]; fumure=[]; campagnes={}; _preMig=null;
   if(!SB||!uid)return;
   const {data,error}=await SB.from('traca_data').select('payload').eq('user_id',uid).maybeSingle();
   if(error){toast('Erreur de chargement : '+error.message);return;}
   const d=data&&data.payload;
-  if(d){
-    parcelles=d.parcelles||[]; ilots=d.ilots||[]; passages=d.passages||[]; meta=d.meta||meta; recalcIFTs(passages);
-    ilot_parcelles=d.ilot_parcelles||{};
-    stock_entrees=d.stock_entrees||[];
-    travaux=d.travaux||[]; fumure=d.fumure||[];
-    let needSave=false;
-
-    // migration 1 : p.ilot (1:1) → many-to-many
-    if(!Object.keys(ilot_parcelles).length && parcelles.some(p=>p.ilot)){
-      ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.ilot===il.nom).map(p=>p.key);});
-      parcelles.forEach(p=>delete p.ilot);
-      needSave=true;
-    }
-
-    // migration 2 : surfaces m² → ares (÷100)
-    // déclenché si flag v2_ares absent — s'applique à toutes les valeurs sans heuristique
-    if(!d.v2_ares && parcelles.length){
-      parcelles.forEach(p=>{
-        p.cad=Math.round((+p.cad||0)/100*10)/10;  /* ex. 1000 m² → 10.0 a */
-        p.pl =Math.round((+p.pl ||0)/100*10)/10;
-      });
-      needSave=true;
-    }
-
-    if(needSave) saveDB();
-  }
+  if(d){ const needSave=_appliquerPayload(d); if(needSave) saveDB(); }
   loadedUid=uid;
 }
 let _saveTimer=null; let loadedUid=null;
@@ -395,15 +376,19 @@ function saveDB(){ syncHeader(); if(readonly||!SB||!session)return; clearTimeout
 async function persist(){
   const uid=viewingUid||session.user.id;
   if(loadedUid && loadedUid!==uid) return; /* sécurité : ne jamais écraser un dossier non chargé en mémoire */
-  const payload={parcelles,ilots,ilot_parcelles,passages,meta,stock_entrees,travaux,fumure,v2_ares:true}; /* flag migration */
+  if(meta.campagne) campagnes[String(meta.campagne)]={passages,travaux,fumure}; /* ranger l'année active */
+  const payload={parcelles,ilots,ilot_parcelles,meta,stock_entrees,campagnes,v2_ares:true,v3_multi:true};
+  if(_preMig) payload._sauvegarde_avant_migration=_preMig; /* copie d'origine conservée */
   const {error}=await SB.from('traca_data').upsert({user_id:uid,payload,updated_at:new Date().toISOString()});
   if(error)toast('Erreur de sauvegarde : '+error.message);
 }
 function syncHeader(){
   const c=document.getElementById('ctxClient'); if(c)c.textContent=meta.client||'—';
-  const cc=document.getElementById('ctxCamp'); if(cc&&cc.value!==meta.campagne)cc.value=meta.campagne||'';
+  const cc=document.getElementById('ctxCamp');
+  if(cc){ const ys=_anneesDispo(), cur=String(meta.campagne||'');
+    cc.innerHTML=ys.map(y=>`<option value="${y}"${y===cur?' selected':''}>${y}</option>`).join(''); }
 }
-function seedDB(){ parcelles=[];ilots=[];ilot_parcelles={};passages=[];stock_entrees=[];travaux=[];fumure=[];meta={client:'',campagne:String(new Date().getFullYear())}; saveDB(); }
+function seedDB(){ parcelles=[];ilots=[];ilot_parcelles={};stock_entrees=[];meta={client:'',campagne:String(new Date().getFullYear())}; campagnes={}; _chargerCampagne(meta.campagne); saveDB(); }
 function chargerExemple(){
   // surfaces EXAMPLE_PARC en m² → ares (÷100)
   parcelles=EXAMPLE_PARC.map((p,i)=>({key:'p'+i,id:p.id,com:p.com,ld:p.ld,cep:p.cep,
@@ -412,7 +397,7 @@ function chargerExemple(){
   ilots=coms.map(c=>({nom:c,type:'Fixe'}));
   ilot_parcelles={};
   ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.com===il.nom).map(p=>p.key);});
-  passages=[]; stock_entrees=[]; travaux=[]; fumure=[]; meta={client:'EARL HOTTE BIFFROTEAUX',campagne:'2026'}; saveDB();
+  stock_entrees=[]; meta={client:'EARL HOTTE BIFFROTEAUX',campagne:'2026'}; campagnes={}; _chargerCampagne(meta.campagne); saveDB();
 }
 
 /* ===================== AUTH SUPABASE ===================== */
@@ -562,13 +547,85 @@ function ilotSurfaces(nom){
   return {cad:ps.reduce((s,p)=>s+parcelleCad(p),0), pl:ps.reduce((s,p)=>s+parcellePl(p),0), nb:ps.length};
 }
 let _parcOpen=new Set();
-function parcellePl(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.pl||0),0)*100)/100; return +p.pl||0; }
-function parcelleCad(p){ if(p.actif===false)return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.cad||0),0)*100)/100; return +p.cad||0; }
+function parcellePl(p){ if(!parcActive(p))return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.pl||0),0)*100)/100; return +p.pl||0; }
+function parcelleCad(p){ if(!parcActive(p))return 0; if(p.sub&&p.sub.length)return Math.round(p.sub.filter(x=>x.actif!==false).reduce((a,x)=>a+(+x.cad||0),0)*100)/100; return +p.cad||0; }
+
+/* ===================== MULTI-CAMPAGNES ===================== */
+/* Une parcelle peut être active ou non selon l'année (report automatique de
+   l'état de la dernière année renseignée). actifAnnee = {"2025":true,"2026":false} */
+function parcActive(p,y){
+  y=String(y||meta.campagne||'');
+  if(p&&p.actifAnnee){
+    const ks=Object.keys(p.actifAnnee).filter(k=>k<=y).sort();
+    if(ks.length) return !!p.actifAnnee[ks[ks.length-1]];
+  }
+  return p? p.actif!==false : true;
+}
+function _chargerCampagne(y){
+  y=String(y); if(!campagnes[y]) campagnes[y]={passages:[],travaux:[],fumure:[]};
+  const c=campagnes[y]; c.passages=c.passages||[]; c.travaux=c.travaux||[]; c.fumure=c.fumure||[];
+  passages=c.passages; travaux=c.travaux; fumure=c.fumure; meta.campagne=y;
+  recalcIFTs(passages);
+}
+function _anneesDispo(){
+  const ys=new Set(Object.keys(campagnes||{})); if(meta.campagne)ys.add(String(meta.campagne));
+  return [...ys].filter(Boolean).sort();
+}
+/* Applique un payload chargé (compte ou dossier client), avec migrations. Renvoie true si une sauvegarde est nécessaire. */
+function _appliquerPayload(d){
+  parcelles=d.parcelles||[]; ilots=d.ilots||[]; ilot_parcelles=d.ilot_parcelles||{};
+  meta=d.meta||{client:'',campagne:String(new Date().getFullYear())};
+  stock_entrees=d.stock_entrees||[];
+  passages=d.passages||[]; travaux=d.travaux||[]; fumure=d.fumure||[];
+  campagnes=d.campagnes||{}; _preMig=d._sauvegarde_avant_migration||null;
+  let needSave=false;
+  /* migration 1 : p.ilot (1:1) → many-to-many */
+  if(!Object.keys(ilot_parcelles).length && parcelles.some(p=>p.ilot)){
+    ilots.forEach(il=>{ilot_parcelles[il.nom]=parcelles.filter(p=>p.ilot===il.nom).map(p=>p.key);});
+    parcelles.forEach(p=>delete p.ilot); needSave=true;
+  }
+  /* migration 2 : surfaces m² → ares (÷100) */
+  if(!d.v2_ares && parcelles.length){
+    parcelles.forEach(p=>{ p.cad=Math.round((+p.cad||0)/100*10)/10; p.pl=Math.round((+p.pl||0)/100*10)/10; }); needSave=true;
+  }
+  /* migration 3 : passages/travaux/fumure à plat → multi-campagnes (sans aucune perte) */
+  if(!d.v3_multi){
+    _preMig={parcelles:d.parcelles||[],ilots:d.ilots||[],ilot_parcelles:d.ilot_parcelles||{},
+             meta:JSON.parse(JSON.stringify(d.meta||{})),stock_entrees:d.stock_entrees||[],
+             passages:d.passages||[],travaux:d.travaux||[],fumure:d.fumure||[],date:new Date().toISOString()};
+    const y0=(meta&&meta.campagne)?String(meta.campagne):String(new Date().getFullYear());
+    campagnes={}; campagnes[y0]={passages:d.passages||[],travaux:d.travaux||[],fumure:d.fumure||[]};
+    needSave=true;
+  }
+  if(!meta.campagne) meta.campagne=String(new Date().getFullYear());
+  meta.campagne=String(meta.campagne);
+  if(!campagnes[meta.campagne]) campagnes[meta.campagne]={passages:[],travaux:[],fumure:[]};
+  _chargerCampagne(meta.campagne);
+  return needSave;
+}
+function _refreshPage(){ const el=document.querySelector('.page.active'); if(el){const pg=el.id.replace('pg-',''); if(typeof RENDER!=='undefined'&&RENDER[pg])RENDER[pg](); } }
+function changerCampagne(y){
+  y=String(y); if(y===String(meta.campagne))return;
+  campagnes[String(meta.campagne)]={passages,travaux,fumure};   /* ranger l'année courante */
+  _chargerCampagne(y); saveDB(); syncHeader(); _refreshPage(); toast('Campagne '+y);
+}
+function changerCampagneRel(delta){
+  const ys=_anneesDispo(); const i=ys.indexOf(String(meta.campagne));
+  const j=(i<0?ys.length-1:i)+delta; if(j<0||j>=ys.length)return; changerCampagne(ys[j]);
+}
+function ajouterCampagne(){
+  const def=String((parseInt(meta.campagne,10)||new Date().getFullYear())+1);
+  let y=prompt('Nouvelle campagne (année à 4 chiffres) :',def); if(!y)return; y=String(y).trim();
+  if(!/^\d{4}$/.test(y)){ toast('Année invalide'); return; }
+  campagnes[String(meta.campagne)]={passages,travaux,fumure};
+  if(!campagnes[y]) campagnes[y]={passages:[],travaux:[],fumure:[]};
+  _chargerCampagne(y); saveDB(); syncHeader(); _refreshPage(); toast('Campagne '+y+' créée');
+}
 function recalcParcelle(p){ if(p.sub&&p.sub.length){ p.pl=parcellePl(p); p.cad=parcelleCad(p); } }
 function _renderParcellesKeepScroll(){ const b=document.querySelector('.parcScroll'); const st=b?b.scrollTop:0; renderParcelles(); const nb=document.querySelector('.parcScroll'); if(nb){ nb.scrollTop=st; requestAnimationFrame(function(){ nb.scrollTop=st; }); } }
 function toggleParcDetail(key){ if(_parcOpen.has(key))_parcOpen.delete(key); else _parcOpen.add(key); _renderParcellesKeepScroll(); }
 function toggleSub(key,i,checked){ const p=parcelles.find(x=>x.key===key); if(!p||!p.sub)return; p.sub[i].actif=checked; recalcParcelle(p); saveDB(); _renderParcellesKeepScroll(); }
-function toggleParcActif(key,checked){ const p=parcelles.find(x=>x.key===key); if(!p)return; p.actif=checked; saveDB(); _renderParcellesKeepScroll(); }
+function toggleParcActif(key,checked){ const p=parcelles.find(x=>x.key===key); if(!p)return; p.actifAnnee=p.actifAnnee||{}; p.actifAnnee[String(meta.campagne)]=checked; saveDB(); _renderParcellesKeepScroll(); }
 function _nouvelIdParcelle(com){
   try{ const used=parcelles.map(p=>p.id); return prochainCodeCommune(com, used, (typeof meta!=="undefined"&&meta&&meta.communes)||[]); }
   catch(e){ let n=1, base=String(com||"P").slice(0,2).toUpperCase(); const ex=new Set(parcelles.map(p=>p.id)); while(ex.has(base+String(n).padStart(2,"0")))n++; return base+String(n).padStart(2,"0"); }
@@ -598,12 +655,12 @@ function degrouperParcelle(key){
 }
 function parcDetailHTML(p){
   const grouped=!!(p.sub&&p.sub.length);
-  const subs=grouped?p.sub:[{com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:p.cad,pl:p.pl,actif:p.actif!==false,_self:true}];
+  const subs=grouped?p.sub:[{com:p.com,ld:p.ld,ref:p.ref,cep:p.cep,cad:p.cad,pl:p.pl,actif:parcActive(p),_self:true}];
   return `<div style="padding:9px 16px">`
     +`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px"><div style="font-size:11.5px;color:var(--mute)">D\u00e9tail cadastral \u2014 d\u00e9cochez une parcelle arrach\u00e9e pour la sortir de la surface \u00e0 travailler.</div>`
     +(grouped?`<button class="btn btn-o" style="font-size:11px;padding:5px 11px" onclick="degrouperParcelle('${p.key}')">D\u00e9grouper</button>`:``)+`</div>`
     +`<table style="width:100%;font-size:12px"><thead><tr><th style="width:28px"></th><th>Commune</th><th>Lieu-dit</th><th>R\u00e9f. cad.</th><th>C\u00e9page</th><th style="text-align:right">Surface (a)</th><th style="width:34px"></th></tr></thead><tbody>`
-    +subs.map((x,i)=>{const on=x.actif!==false; const cb=x._self?`toggleParcActif('${p.key}',this.checked)`:`toggleSub('${p.key}',${i},this.checked)`; const rm=grouped?`<button class="iconbtn btn-danger" title="Retirer du groupe" onclick="retirerSubDuGroupe('${p.key}',${i})" style="padding:2px 7px">\u2715</button>`:``; return `<tr style="${on?'':'opacity:.5'}"><td><input type="checkbox" ${on?'checked':''} onchange="${cb}"></td><td>${esc(x.com||'')}</td><td>${esc(x.ld||'')}</td><td style="font-size:11px;color:var(--mute)">${esc(x.ref||'')}</td><td>${esc(x.cep||'')}</td><td class="mono" style="text-align:right">${fmtS(x.pl)}${on?'':' <span style="color:var(--lie)">arrach\u00e9e</span>'}</td><td style="text-align:right">${rm}</td></tr>`;}).join('')
+    +subs.map((x,i)=>{const on=x.actif!==false; const cb=x._self?`toggleParcActif('${p.key}',this.checked)`:`toggleSub('${p.key}',${i},this.checked)`; const rm=grouped?`<button class="iconbtn btn-danger" title="Retirer du groupe" onclick="retirerSubDuGroupe('${p.key}',${i})" style="padding:2px 7px">\u2715</button>`:``; return `<tr style="${on?'':'opacity:.5'}"><td><input type="checkbox" ${on?'checked':''} onchange="${cb}"></td><td>${esc(x.com||'')}</td><td>${esc(x.ld||'')}</td><td style="font-size:11px;color:var(--mute)">${esc(x.ref||'')}</td><td>${esc(x.cep||'')}</td><td class="mono" style="text-align:right">${fmtS(x.pl)}${on?'':' <span style="color:var(--lie)">inactive</span>'}</td><td style="text-align:right">${rm}</td></tr>`;}).join('')
     +`</tbody></table></div>`;
 }
 function selectAllParc(ck){ document.querySelectorAll('.parcSel').forEach(cb=>cb.checked=ck); }
@@ -790,8 +847,12 @@ function emptyState(t,s){return`<div class="empty"><svg viewBox="0 0 24 24" fill
 
 /* ===================== VUE CONSULTANT ===================== */
 let clientsCache=[];
+function _payloadAnnee(d){
+  if(d&&d.campagnes){ const y=(d.meta&&d.meta.campagne)||Object.keys(d.campagnes).sort().pop(); return d.campagnes[y]||{passages:[],travaux:[],fumure:[]}; }
+  return {passages:(d&&d.passages)||[],travaux:(d&&d.travaux)||[],fumure:(d&&d.fumure)||[]};
+}
 function iftFromPayload(d){
-  const parc=d.parcelles||[], pass=d.passages||[], ip=d.ilot_parcelles||{}; recalcIFTs(pass);
+  const parc=d.parcelles||[], pass=_payloadAnnee(d).passages, ip=d.ilot_parcelles||{}; recalcIFTs(pass);
   function plIlot(nom){const keys=ip[nom]||[];return parc.filter(p=>keys.includes(p.key)).reduce((s,p)=>s+parcellePl(p),0);}
   const St=parc.reduce((s,p)=>s+parcellePl(p),0); let a={h:0,hh:0,bio:0};
   pass.forEach(pa=>{
@@ -813,7 +874,7 @@ async function renderClients(){
   if(error){el.querySelector('.card').innerHTML='Erreur : '+esc(error.message);return;}
   clientsCache=data||[];
   if(!clientsCache.length){el.querySelector('.card').innerHTML=emptyState('Aucune donnée client','Vos clients apparaîtront ici dès leur première saisie.');return;}
-  const rows=clientsCache.map(c=>{const d=c.payload||{};const ex=iftFromPayload(d);const np=(d.passages||[]).length;
+  const rows=clientsCache.map(c=>{const d=c.payload||{};const ex=iftFromPayload(d);const np=_payloadAnnee(d).passages.length;
     const pl=(d.parcelles||[]).reduce((s,p)=>s+(+p.pl||0),0)/100;
     const contact=[d.meta?.contact,d.meta?.commune,d.meta?.cp].filter(Boolean).join(' · ');
     return `<tr style="cursor:pointer" onclick="ouvrirClient('${c.user_id}')">
@@ -856,8 +917,10 @@ async function nouveauClient(){
   try{
     if(data.session&&data.user){
       await SB.from('traca_data').upsert({user_id:data.user.id,
-        payload:{parcelles:[],ilots:[],ilot_parcelles:{},passages:[],stock_entrees:[],
-          meta:{client:nom,campagne:camp,mail:email},v2_ares:true},
+        payload:{parcelles:[],ilots:[],ilot_parcelles:{},stock_entrees:[],
+          meta:{client:nom,campagne:camp,mail:email},
+          campagnes:{[camp]:{passages:[],travaux:[],fumure:[]}},
+          v2_ares:true,v3_multi:true},
         updated_at:new Date().toISOString()});
       rowCree=true;
     }
@@ -874,15 +937,17 @@ async function nouveauClient(){
 function ouvrirClient(uid){
   const c=clientsCache.find(x=>x.user_id===uid); if(!c)return;
   const d=JSON.parse(JSON.stringify(c.payload||{}));
-  parcelles=d.parcelles||[];ilots=d.ilots||[];ilot_parcelles=d.ilot_parcelles||{};passages=d.passages||[];stock_entrees=d.stock_entrees||[];travaux=d.travaux||[];fumure=d.fumure||[];meta=d.meta||{client:'',campagne:''}; recalcIFTs(passages);
-  readonly=false; viewingLabel=meta.client||'client'; viewingUid=uid; loadedUid=uid;
-  // topbar : rester en "Mode consultant" (le bandeau doré indique le client)
+  viewingUid=uid; loadedUid=uid;
+  const needSave=_appliquerPayload(d);
+  readonly=false; viewingLabel=meta.client||'client';
+  // topbar : rester en "Mode consultant" (le bandeau doré indique le client) + sélecteur de campagne visible
   const lbl=document.getElementById('ctxConsultantLabel');
   const csp=document.getElementById('ctxClientSpan');
   const cmp=document.getElementById('ctxCamp');
-  if(lbl)lbl.style.display=''; if(csp)csp.style.display='none'; if(cmp)cmp.style.display='none';
+  if(lbl)lbl.style.display=''; if(csp)csp.style.display='none'; if(cmp)cmp.style.display='';
   const b=document.getElementById('roReturn'); if(b)b.style.display='';
   const rl=document.getElementById('roLabel'); if(rl)rl.textContent=viewingLabel;
+  if(needSave) saveDB();
   syncHeader(); go('dash'); toast('Dossier ouvert : '+viewingLabel);
 }
 async function returnToOwn(){
@@ -2138,8 +2203,10 @@ function confirmerDuplication(nomSrc){
 function exportJSON(){
   const stamp=new Date().toISOString().slice(0,10);
   const safe=s=>(String(s||'').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'')||'dossier');
+  if(meta.campagne) campagnes[String(meta.campagne)]={passages,travaux,fumure};
   const data={_export:{app:'VITI Sens',type:'sauvegarde-complete',date:new Date().toISOString()},
-    parcelles,ilots,ilot_parcelles,passages,meta,stock_entrees,travaux,fumure};
+    parcelles,ilots,ilot_parcelles,meta,stock_entrees,campagnes,
+    passages,travaux,fumure};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   dl(blob,`VITI_Sens_sauvegarde_${safe(meta.client)}_${safe(meta.campagne)}_${stamp}.json`);
   toast('Sauvegarde complète téléchargée');
@@ -2147,7 +2214,7 @@ function exportJSON(){
 function importJSON(){
   const inp=document.createElement('input');inp.type='file';inp.accept='.json';
   inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-    rd.onload=()=>{try{const d=JSON.parse(rd.result);parcelles=d.parcelles||parcelles;ilots=d.ilots||ilots;ilot_parcelles=d.ilot_parcelles||ilot_parcelles;passages=d.passages||passages;recalcIFTs(passages);stock_entrees=d.stock_entrees||stock_entrees;travaux=d.travaux||travaux;fumure=d.fumure||fumure;meta=d.meta||meta;saveDB();toast('Données importées');go('dash');}catch(err){toast('Fichier illisible');}};rd.readAsText(f);};
+    rd.onload=()=>{try{const d=JSON.parse(rd.result);_appliquerPayload(d);saveDB();syncHeader();toast('Données importées');go('dash');}catch(err){toast('Fichier illisible');}};rd.readAsText(f);};
   inp.click();
 }
 function exportCSV(){ /* conservé pour compatibilité JSON import */
