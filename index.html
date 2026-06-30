@@ -2075,15 +2075,15 @@ function majFormFonction(p){
 
 function switchTabProduit(mode,p){} // conservé pour compatibilité anciens appels
 
-function saveProduitPerso(idx){
+function _lireFormProduit(){
   const g=id=>document.getElementById(id)?.value?.trim()||'';
-  const nom=g('hl_nom'); if(!nom){toast('Le nom est obligatoire.');return;}
+  const nom=g('hl_nom'); if(!nom){toast('Le nom est obligatoire.');return null;}
   const fonc=g('hl_fonc');
   const isHorsIFT=['MFSC','Correcteur de carence'].includes(fonc);
   const unite=isHorsIFT
     ?(document.getElementById('hl_unite_mfsc')?.value||'L/ha')
     :(document.getElementById('hl_unite_ppp')?.value||'kg/ha');
-  const prod={
+  return {
     n:nom, sa:g('hl_sa'), f:fonc, amm:g('hl_amm'),
     h:isHorsIFT?'':g('hl_h'),
     cmr:(!isHorsIFT&&document.getElementById('hl_cmr')?.checked)?'OUI':'NON',
@@ -2095,11 +2095,14 @@ function saveProduitPerso(idx){
     znt:isHorsIFT?'':g('hl_znt'),
     categorie:isHorsIFT?'mfsc':'ppp', horsListe:true
   };
+}
+function saveProduitPerso(idx){
+  const prod=_lireFormProduit(); if(!prod)return;
   if(!meta.produits_perso) meta.produits_perso=[];
   if(idx===null||idx==null) meta.produits_perso.push(prod);
   else meta.produits_perso[idx]=prod;
   saveDB(); closeModal(); renderProduits();
-  toast(isHorsIFT?`${fonc} enregistré`:'PPP enregistré');
+  toast(prod.categorie==='mfsc'?`${prod.f} enregistré`:'PPP enregistré');
 }
 function supprimerProduitPerso(idx){
   if(!confirm('Supprimer ce produit ?'))return;
@@ -2400,6 +2403,7 @@ function renderStocks(){
    <div class="ph"><div><div class="eyebrow">Référentiel</div><h2>Stocks de produits</h2>
      <div class="sub">Le stock se décompte automatiquement à chaque passage (dose appliquée × surface plantée traitée). Conversions g↔kg et mL↔L automatiques.</div></div>
      <div style="display:flex;gap:8px;flex-wrap:wrap">
+       <button class="btn btn-o" onclick="importBonPDF()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>Importer un bon (PDF)</button>
        <button class="btn btn-o" onclick="lireBonLivraison()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Lire un bon (photo)</button>
        <button class="btn btn-g" onclick="ouvrirEntreeStock()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Saisir une entrée</button></div></div>
 
@@ -2422,7 +2426,7 @@ function renderStocks(){
        ${[...stock_entrees].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(e=>`<tr>
          <td class="mono">${esc(dateFR(e.date))}</td><td><b>${esc(e.n)}</b></td>
          <td class="mono">${esc(e.qte)} ${esc(e.unite||'')}</td>
-         <td>${esc(e.fournisseur||'—')}</td><td>${esc(e.lot||'—')}</td>
+         <td>${esc(e.fournisseur||'—')}</td><td>${esc(e.lot||'—')}${e.dateFab?`<br><span style="font-size:10px;color:var(--mute)">fab. ${esc(dateFR(e.dateFab))}</span>`:''}</td>
          <td><button class="iconbtn btn-danger" onclick="supprEntreeStock('${e.id}')" title="Supprimer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`).join('')}
      </tbody></table></div>`:'<div style="padding:18px;color:var(--mute);font-size:13px">Aucune entrée saisie.</div>'}
    </div>`;
@@ -2511,6 +2515,194 @@ function lireBonLivraison(){
       }catch(e){ toast('Lecture impossible : '+(e.message||e)); } };
     rd.readAsDataURL(f); };
   inp.click();
+}
+
+/* ===================== IMPORT BON DE LIVRAISON / FACTURE (PDF) ===================== */
+let _blLignes=[], _blInclus=[], _blFour='', _blDateAchat='', _blManquants=[];
+const _BL_UNITS=['L','kg','g','mL','cL','hL','dose'];
+
+function _uniteCanon(u){ u=(u||'').toLowerCase().trim();
+  if(/^lit|^l$/.test(u))return 'L';
+  if(/^kil|^kg/.test(u))return 'kg';
+  if(/^ton|^t$/.test(u))return 'kg';      /* conversion gérée à part */
+  if(/^gram|^g$/.test(u))return 'g';
+  if(/^ml/.test(u))return 'mL';
+  if(/^cl/.test(u))return 'cL';
+  if(/^hl/.test(u))return 'hL';
+  return ''; }
+function _num(s){ const v=parseFloat(String(s).replace(/\s/g,'').replace(/,/g,'')); return isFinite(v)?v:null; }
+function _normDateFr(d){ const m=String(d).match(/(\d{2})-(\d{2})-(\d{2})/); return m?('20'+m[3]+'-'+m[2]+'-'+m[1]):''; }
+
+/* Texte du PDF regroupé en lignes (par coordonnée verticale) */
+async function _pdfTexteLignes(buf){
+  const pdfjs=await loadPdfJs();
+  const pdf=await pdfjs.getDocument({data:buf}).promise;
+  const out=[];
+  for(let i=1;i<=pdf.numPages;i++){
+    const tc=await (await pdf.getPage(i)).getTextContent();
+    const items=tc.items.map(it=>({s:it.str,x:it.transform[4],y:Math.round(it.transform[5])})).filter(it=>it.s&&it.s.trim());
+    const buckets=[];
+    items.forEach(it=>{ let b=buckets.find(bb=>Math.abs(bb.y-it.y)<=2); if(!b){b={y:it.y,items:[]};buckets.push(b);} b.items.push(it); });
+    buckets.sort((a,b)=>b.y-a.y).forEach(b=>{ const ln=b.items.sort((a,c)=>a.x-c.x).map(it=>it.s).join(' ').replace(/\s+/g,' ').trim(); if(ln)out.push(ln); });
+  }
+  return out;
+}
+function _detecterDistrib(lignes){ const t=lignes.join(' ').toUpperCase();
+  if(/CAZORLA/.test(t))return 'cazorla';
+  if(/COMPAS/.test(t))return 'compas';
+  return 'generique'; }
+
+/* Parseur COMPAS : ancre « Numéro LOT|JJ-MM-AA Qte : Q » */
+function _parseCompasBL(lignes){
+  const out=[]; let cur=null;
+  const NOISE=/utilisable en agriculture|RUE 2018|BON DE LIVRAISON|Code (Client|Article)|^No B\.P|^Date B\.P|Désignation|^compas|COMPAS S\.A\.S|Observations|Technico|Livré par|Quantité.*Unité/i;
+  const numRe=/(?:Num[ée]ro\s+)?([A-Z0-9]{4,})\s*\|\s*(\d{2}-\d{2}-\d{2})\s*Qte\s*:\s*([\d.,]+)/i;
+  const UNI=/\b(Litre|Kilo|Tonne|Kg|kg|Bidon|Dose|Sac|Gramme|g|mL|L)\b/;
+  for(const ln of lignes){
+    const m=ln.match(numRe);
+    if(m){ let q=_num(m[3]); if(cur&&cur.facteur)q=q*cur.facteur;
+      out.push({produit:cur?cur.designation:'', lot:m[1], dateFab:_normDateFr(m[2]), qte:q, unite:cur?cur.unite:'', amm:'', distrib:'COMPAS'}); continue; }
+    if(NOISE.test(ln)) continue;
+    const pm=ln.match(/^([A-Z0-9]{5,})\s+(.+)$/);
+    if(pm){ const rest=pm[2]; const cm=rest.match(/\b(Litre|Kilo|Tonne)\b/i); const rawU=cm?cm[1]:'';
+      let desig=rest; const cut=desig.search(/\s+(EN\s+\d|\d+\s*L\/|\d+\s*[A-Z]{1,3}\b|LE\s+(L|LITRE|KG)|\d{6,}|\d+(?:[.,]\d+)?\s+(Litre|Kilo|Tonne))/i);
+      if(cut>0)desig=desig.slice(0,cut);
+      desig=desig.replace(/\s+/g,' ').trim();
+      cur={code:pm[1], designation:desig, unite:_uniteCanon(rawU), facteur:/^ton/i.test(rawU)?1000:1}; }
+  }
+  return out;
+}
+/* Parseur CAZORLA : ligne « DESC <code douanier 8> paquets kgs/paq TOTAL pvp import iva » + N°Lot + NomAMM/PCP */
+function _parseCazorlaBL(lignes){
+  const out=[]; let cur=null;
+  const prodRe=/^(.+?)\s+(\d{8})\s+([\d.,]+(?:\s+[\d.,]+){2,})/;
+  const lotRe=/N[ºo°]?\s*Lot\s*Fabricaci[óo]\s*:?\s*([A-Z0-9_]+)/i;
+  const ammRe=/^(.+?)\s+(AMM|PCP)\s*:?\s*([0-9A-Z\-]+)/i;
+  const UNI=/(\d+(?:[.,]\d+)?)\s*(Kg|kg|L|l|g|Ha|mL|cc)\b/;
+  const push=()=>{ if(cur)out.push(cur); };
+  for(const ln of lignes){
+    const pm=ln.match(prodRe);
+    if(pm && /^\d{8}$/.test(pm[2])){
+      push();
+      const desc=pm[1].replace(/\s*\(\s*$/,'').replace(/\*+\s*$/,'').trim();
+      const nums=(pm[3].match(/[\d.,]+/g)||[]);
+      const total=nums.length>=3?_num(nums[2]):(nums.length?_num(nums[nums.length-1]):null);
+      const um=desc.match(UNI);
+      cur={produit:desc, qte:total, unite:um?_uniteCanon(um[2]):'', lot:'', amm:'', distrib:'CAZORLA'};
+      continue;
+    }
+    if(!cur) continue;
+    const lm=ln.match(lotRe); if(lm)cur.lot=lm[1];
+    const am=ln.match(ammRe);
+    if(am){ const nom=am[1].replace(/^N[ºo°].*?:/,'').trim();
+      if(/AMM/i.test(am[2])){ cur.amm=am[3]; if(nom&&nom.length<40)cur.produit=nom; }
+      else { cur.pcp=am[3]; if(nom&&nom.length<40)cur.produit=nom; } }
+  }
+  push();
+  return out.filter(l=>l.qte!=null);
+}
+function _parseGeneriqueBL(lignes){
+  /* repli : on tente l'ancre COMPAS, sinon rien d'exploitable automatiquement */
+  return _parseCompasBL(lignes);
+}
+/* Correspondance e-phy : par AMM, sinon par nom (tokens) ; renvoie {n, amm} ou null */
+function _matchProduitLigne(line){
+  if(line.amm){ const p=EPHY.find(x=>String(x.amm)===String(line.amm)); if(p)return {n:p.n,amm:p.amm}; }
+  const N=normOCR(line.produit||'');
+  if(!N) return null;
+  const all=[...EPHY,...getProduitsPerso()];
+  let best=null,bestSc=0;
+  all.forEach(p=>{ const toks=normOCR(p.n).split(' ').filter(t=>t.length>=3); if(!toks.length)return;
+    const hit=toks.filter(t=>N.includes(t)).length, sc=hit/toks.length;
+    if(sc>bestSc){bestSc=sc;best=p;} });
+  return bestSc>=0.6?{n:best.n,amm:best.amm||''}:null;
+}
+
+function importBonPDF(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='application/pdf,.pdf';
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f)return; toast('Lecture du bon…');
+    const rd=new FileReader();
+    rd.onload=async()=>{ try{
+        const lignes=await _pdfTexteLignes(rd.result);
+        const distrib=_detecterDistrib(lignes);
+        let res = distrib==='cazorla'?_parseCazorlaBL(lignes) : distrib==='compas'?_parseCompasBL(lignes) : _parseGeneriqueBL(lignes);
+        res=res.filter(l=>l.qte!=null && l.qte>0 && (l.produit||'').trim());
+        if(!res.length){ toast('Aucune ligne produit détectée — format non reconnu pour l\'instant.'); return; }
+        // pré-correspondance e-phy
+        res.forEach(l=>{ const m=_matchProduitLigne(l); l.reconnu=!!m; if(m)l.produit=m.n; if(m&&m.amm)l.amm=m.amm; if(!l.unite)l.unite=''; });
+        _blLignes=res;
+        previewBL(distrib);
+      }catch(e){ toast('Lecture impossible : '+(e.message||e)); } };
+    rd.readAsArrayBuffer(f); };
+  inp.click();
+}
+function previewBL(distrib){
+  const today=new Date().toISOString().slice(0,10);
+  const fourDef = distrib==='cazorla'?'M. CAZORLA' : distrib==='compas'?'COMPAS' : '';
+  const uopt=u=>_BL_UNITS.map(x=>`<option ${x===u?'selected':''}>${x}</option>`).join('');
+  const rows=_blLignes.map((l,i)=>`<tr>
+     <td style="text-align:center"><input type="checkbox" id="bl_inc${i}" checked></td>
+     <td><input id="bl_p${i}" value="${esc(l.produit||'')}" style="width:100%;min-width:150px;padding:5px;border:1px solid var(--line);border-radius:6px">
+         ${l.reconnu?'<span class="tag-pill" style="font-size:9px">e-phy</span>':'<span class="tag-pill mute" style="font-size:9px">à créer</span>'}</td>
+     <td><input id="bl_lot${i}" value="${esc(l.lot||'')}" style="width:130px;padding:5px;border:1px solid var(--line);border-radius:6px"></td>
+     <td><input id="bl_fab${i}" type="date" value="${esc(l.dateFab||'')}" style="padding:5px;border:1px solid var(--line);border-radius:6px"></td>
+     <td><input id="bl_q${i}" type="number" step="0.001" value="${esc(l.qte)}" style="width:80px;padding:5px;border:1px solid var(--line);border-radius:6px;text-align:right"></td>
+     <td><select id="bl_u${i}" style="padding:5px;border:1px solid var(--line);border-radius:6px">${uopt(l.unite)}</select></td>
+   </tr>`).join('');
+  openModal('Importer un bon de livraison', `<div style="max-height:74vh;overflow:auto;padding-right:4px">
+    <div class="alert info" style="margin-bottom:12px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
+      <div>${_blLignes.length} ligne(s) détectée(s)${distrib!=='generique'?' · format '+(distrib==='cazorla'?'CAZORLA':'COMPAS'):''}. Vérifiez et corrigez si besoin (surtout les numéros de lot), puis validez. Une entrée de stock sera créée par ligne.</div></div>
+    <div class="row"><div class="field"><label>Fournisseur</label><input id="bl_four" value="${esc(fourDef)}"></div>
+      <div class="field"><label>Date d'achat (à défaut de date de fabrication)</label><input id="bl_dateachat" type="date" value="${today}"></div></div>
+    <div class="tbl-wrap"><table style="font-size:12.5px"><thead><tr><th>✓</th><th>Produit</th><th>N° lot</th><th>Date fab.</th><th>Qté</th><th>Unité</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:12px" onclick="validerBL()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Valider et créer les entrées</button>
+  </div>`);
+}
+function validerBL(){
+  const g=id=>document.getElementById(id);
+  _blFour=g('bl_four').value.trim(); _blDateAchat=g('bl_dateachat').value;
+  _blInclus=[];
+  _blLignes.forEach((l,i)=>{ if(!g('bl_inc'+i)?.checked)return;
+    const nom=g('bl_p'+i).value.trim(); const q=_num(g('bl_q'+i).value);
+    if(!nom||!(q>0))return;
+    _blInclus.push({ produit:nom, lot:g('bl_lot'+i).value.trim(), dateFab:g('bl_fab'+i).value,
+      qte:q, unite:g('bl_u'+i).value, amm:l.amm||'' });
+  });
+  if(!_blInclus.length){ toast('Aucune ligne sélectionnée.'); return; }
+  // produits non reconnus (ni e-phy ni déjà créés) → à créer
+  const seen=new Set(); _blManquants=[];
+  _blInclus.forEach(l=>{ const m=_matchProduitLigne(l); l._reconnu=!!m; if(m)l.produit=m.n;
+    if(!m){ const k=l.produit.toUpperCase(); if(!seen.has(k)){ seen.add(k); _blManquants.push(l.produit); } } });
+  if(_blManquants.length){ _blFormManquant(0); } else { _blCreerEntrees(); }
+}
+function _blFormManquant(i){
+  if(i>=_blManquants.length){ _blCreerEntrees(); return; }
+  const nom=_blManquants[i];
+  openModal(`Créer le produit (${i+1}/${_blManquants.length})`, `
+    <div class="alert info" style="margin-bottom:12px;font-size:12.5px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
+      <div>Ce produit n'est pas dans la base e-phy. Complétez sa fiche (la spécialité est pré-remplie), puis « Créer et suivant ». Vous pouvez aussi « Passer » pour le créer plus tard.</div></div>
+    <div id="formProduit"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-o" style="flex:1;justify-content:center" onclick="_blFormManquant(${i+1})">Passer</button>
+      <button class="btn btn-g" style="flex:2;justify-content:center" onclick="_blSaveManquant(${i})"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>Créer et suivant</button>
+    </div>`);
+  renderFormProduit({n:nom});
+}
+function _blSaveManquant(i){
+  const prod=_lireFormProduit(); if(!prod)return;
+  if(!meta.produits_perso) meta.produits_perso=[];
+  meta.produits_perso.push(prod); saveDB();
+  _blFormManquant(i+1);
+}
+function _blCreerEntrees(){
+  let nb=0;
+  _blInclus.forEach((l,k)=>{
+    stock_entrees.push({ id:'E'+Date.now()+'_'+k, date:(l.dateFab||_blDateAchat),
+      n:l.produit, qte:l.qte, unite:l.unite, fournisseur:_blFour, lot:l.lot, dateFab:l.dateFab||'' });
+    nb++;
+  });
+  saveDB(); closeModal(); renderStocks(); go('stocks');
+  toast(nb+' entrée'+(nb>1?'s':'')+' de stock créée'+(nb>1?'s':'')+' ✓');
 }
 
 /* ===================== TRAVAUX (calendrier) ===================== */
